@@ -14,7 +14,7 @@
 #include <cassert>
 
 #ifdef _DEBUG
-#define VERIFY_PRINT(text) {printf("%s", text); assert(0);}
+#define VERIFY_PRINT(text) {printf("%s %d %s\n", __FUNCTION__, __LINE__, text); assert(0);}
 #else
 #define VERIFY_PRINT(text) {printf("%s", text);}
 #endif
@@ -24,6 +24,8 @@
 #define VULKAN_VERIFY(res, text) VERIFY(res == VK_SUCCESS, text, res)
 
 #define ASSERT(condition, text) if (!(condition)) {VERIFY_PRINT(text);}
+
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
 namespace mhe {
 
@@ -36,6 +38,8 @@ struct PlatformData
     HWND hwnd;
 };
 #endif
+
+const VkFlags vk_all_color_components = VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
 uint32_t get_memory_type_index(const VkMemoryRequirements& requirements, const VkPhysicalDeviceMemoryProperties& memory_properties);
 
@@ -55,12 +59,52 @@ void init_defaults(VkCommandBufferAllocateInfo& cb_allocate_info);
 void init_defaults(VkCommandBufferBeginInfo& begin_info);
 void init_defaults(VkSubmitInfo& submit_info);
 void init_defaults(VkPresentInfoKHR& present_info);
+void init_defaults(VkSemaphoreCreateInfo& create_info);
+void init_defaults(VkGraphicsPipelineCreateInfo& create_info);
+void init_defaults(VkPipelineVertexInputStateCreateInfo& create_info);
+void init_defaults(VkPipelineInputAssemblyStateCreateInfo& create_info);
+void init_defaults(VkPipelineRasterizationStateCreateInfo& create_info);
+void init_defaults(VkPipelineDepthStencilStateCreateInfo& create_info);
+void init_defaults(VkPipelineColorBlendStateCreateInfo& create_info);
+void init_defaults(VkPipelineColorBlendAttachmentState& state);
+void init_defaults(VkPipelineMultisampleStateCreateInfo& create_info);
+void init_defaults(VkPipelineDynamicStateCreateInfo& create_info);
+void init_defaults(VkPipelineLayoutCreateInfo& create_info);
+void init_defaults(VkDescriptorSetLayoutCreateInfo& create_info);
+void init_defaults(VkShaderModuleCreateInfo& create_info);
+void init_defaults(VkPipelineShaderStageCreateInfo& create_info);
+void init_defaults(VkPipelineShaderStageCreateInfo& create_info);
+void init_defaults(VkPipelineCacheCreateInfo& create_info);
+void init_defaults(VkPipelineViewportStateCreateInfo& create_info);
 
 VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_t width, uint32_t height, const VulkanContext& vulkan_context);
 void destroy_image_view(VkImageView& image_view, VkImage& vk_image, const VulkanContext& vulkan_context);
 
+VkResult create_shader_module(VkShaderModule& shader, const VulkanContext& context, const uint8_t* text, uint32_t size);
+void destroy_shader_module(VkShaderModule& shader, const VulkanContext& context);
+
+bool read_whole_file(std::vector<uint8_t>& data, const char* filename, const char* mode = "rb");
+
+VkResult load_shader_module(VkShaderModule& shader, const VulkanContext& context, const char* filename);
+
+struct ExtensionFunctions
+{
+    PFN_vkCreateDebugReportCallbackEXT vkCreateDebugReportCallbackEXT;
+    PFN_vkDestroyDebugReportCallbackEXT vkDestroyDebugReportCallbackEXT;
+};
+
 struct VulkanContext
 {
+    std::vector<const char*> instance_debug_layers_extensions;
+    std::vector<const char*> enabled_instance_debug_layers_extensions;
+
+    std::vector<const char*> device_debug_layers_extensions;
+    std::vector<const char*> enabled_device_debug_layers_extensions;
+
+    VkDebugReportCallbackEXT debug_report_callback;
+
+    ExtensionFunctions extension_functions;
+
     PlatformData platform_data;
     std::vector<VkLayerProperties> instance_layer_properties;
     std::vector<VkExtensionProperties> instance_extension_properties;
@@ -94,6 +138,10 @@ struct VulkanContext
     VkRenderPass main_render_pass;
     VkFramebuffer main_framebuffer;
 
+    VkSemaphore present_semaphore;
+
+    VkPipelineCache pipeline_cache;
+
     // main command buffer pool
     VkCommandPool main_command_pool;
 
@@ -105,7 +153,7 @@ struct VulkanContext
     {}
 };
 
-VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height);
+VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height, bool enable_default_debug_layers);
 void destroy_vulkan_context(VulkanContext& context);
 
 bool app_message_loop(VulkanContext& context);

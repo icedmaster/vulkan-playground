@@ -1,6 +1,16 @@
 #include "vulkan_helper.hpp"
 
+#include <limits>
+
 namespace mhe {
+
+VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkFlags msgFlags, VkDebugReportObjectTypeEXT objType,
+                                              uint64_t srcObject, size_t location, int32_t msgCode,
+                                              const char *pLayerPrefix, const char *pMsg, void *pUserData)
+{
+    printf("%s %s", pLayerPrefix, pMsg);
+    return VK_TRUE;
+}
 
 #ifdef _WIN32
 LRESULT CALLBACK wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -137,8 +147,10 @@ void init_defaults(VkDeviceCreateInfo& device_create_info)
 
 void init_defaults(VkImageCreateInfo& image_create_info)
 {
+    VkExtent3D extent;
+    extent.width = extent.height = extent.depth = 1;
     image_create_info.arrayLayers = 1;
-    image_create_info.extent = { 1, 1, 1 };
+    image_create_info.extent = extent;
     image_create_info.flags = 0;
     image_create_info.format = VK_FORMAT_END_RANGE;
     image_create_info.imageType = VK_IMAGE_TYPE_2D;
@@ -157,7 +169,10 @@ void init_defaults(VkImageCreateInfo& image_create_info)
 
 void init_defaults(VkImageViewCreateInfo& image_view_create_info)
 {
-    image_view_create_info.components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY , VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
+    VkComponentMapping component_mapping;
+    component_mapping.r = component_mapping.g = component_mapping.b = component_mapping.a = 
+        VK_COMPONENT_SWIZZLE_IDENTITY;
+    image_view_create_info.components = component_mapping;
     image_view_create_info.flags = 0;
     image_view_create_info.format = VK_FORMAT_END_RANGE;
     image_view_create_info.image = 0;
@@ -291,11 +306,212 @@ void init_defaults(VkPresentInfoKHR& present_info)
     present_info.pImageIndices = nullptr;
 }
 
+void init_defaults(VkSemaphoreCreateInfo& create_info)
+{
+    create_info.flags = 0;
+    create_info.pNext = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+}
+
+void init_defaults(VkGraphicsPipelineCreateInfo& create_info)
+{
+    create_info.basePipelineHandle = VK_NULL_HANDLE;
+    create_info.basePipelineIndex = 0;
+    create_info.flags = 0;
+    create_info.layout = VK_NULL_HANDLE;
+    create_info.pColorBlendState = nullptr;
+    create_info.pDepthStencilState = nullptr;
+    create_info.pDynamicState = nullptr;
+    create_info.pInputAssemblyState = nullptr;
+    create_info.pMultisampleState = nullptr;
+    create_info.pNext = nullptr;
+    create_info.pRasterizationState = nullptr;
+    create_info.pStages = nullptr;
+    create_info.pTessellationState = nullptr;
+    create_info.pVertexInputState = nullptr;
+    create_info.pViewportState = nullptr;
+    create_info.renderPass = VK_NULL_HANDLE;
+    create_info.stageCount = 0;
+    create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    create_info.subpass = 0;
+}
+
+void init_defaults(VkPipelineVertexInputStateCreateInfo& create_info)
+{
+    create_info.flags = 0;
+    create_info.pNext = nullptr;
+    create_info.pVertexAttributeDescriptions = nullptr;
+    create_info.pVertexBindingDescriptions = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    create_info.vertexAttributeDescriptionCount = 0;
+    create_info.vertexBindingDescriptionCount = 0;
+}
+
+void init_defaults(VkPipelineInputAssemblyStateCreateInfo& create_info)
+{
+    create_info.flags = 0;
+    create_info.pNext = nullptr;
+    create_info.primitiveRestartEnable = VK_FALSE;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    create_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+}
+
+void init_defaults(VkPipelineRasterizationStateCreateInfo& create_info)
+{
+    create_info.cullMode = VK_CULL_MODE_BACK_BIT;
+    create_info.depthBiasClamp = 0.0f;
+    create_info.depthBiasConstantFactor = 0.0f;
+    create_info.depthBiasEnable = VK_FALSE;
+    create_info.depthBiasSlopeFactor = 0.0f;
+    create_info.depthClampEnable = VK_FALSE;
+    create_info.flags = 0;
+    create_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    create_info.lineWidth = 0.0f;
+    create_info.pNext = nullptr;
+    create_info.polygonMode = VK_POLYGON_MODE_FILL;
+    create_info.rasterizerDiscardEnable = VK_TRUE;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+}
+
+void init_defaults(VkPipelineDepthStencilStateCreateInfo& create_info)
+{
+    VkStencilOpState stencil_default_state;
+    stencil_default_state.compareMask = 0xffffffff;
+    stencil_default_state.compareOp = VK_COMPARE_OP_ALWAYS;
+    stencil_default_state.depthFailOp = VK_STENCIL_OP_KEEP;
+    stencil_default_state.failOp = VK_STENCIL_OP_KEEP;
+    stencil_default_state.passOp = VK_STENCIL_OP_KEEP;
+    stencil_default_state.reference = 0;
+    stencil_default_state.writeMask = 0xffffffff;
+    create_info.back = stencil_default_state;
+    create_info.depthBoundsTestEnable = VK_FALSE;
+    create_info.depthCompareOp = VK_COMPARE_OP_LESS;
+    create_info.depthTestEnable = VK_TRUE;
+    create_info.depthWriteEnable = VK_TRUE;
+    create_info.flags = 0;
+    create_info.front = stencil_default_state;
+    create_info.maxDepthBounds = 1.0f;
+    create_info.minDepthBounds = 0.0f;
+    create_info.pNext = nullptr;
+    create_info.stencilTestEnable = VK_FALSE;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+}
+
+void init_defaults(VkPipelineColorBlendStateCreateInfo& create_info)
+{
+    create_info.attachmentCount = 0;
+    for (int i = 0; i < 4; ++i) create_info.blendConstants[i] = 0.0f;
+    create_info.flags = 0;
+    create_info.logicOp = VK_LOGIC_OP_CLEAR;
+    create_info.logicOpEnable = VK_FALSE;
+    create_info.pAttachments = nullptr;
+    create_info.pNext = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+}
+
+void init_defaults(VkPipelineColorBlendAttachmentState& state)
+{
+    state.alphaBlendOp = VK_BLEND_OP_ADD;
+    state.blendEnable = VK_FALSE;
+    state.colorBlendOp = VK_BLEND_OP_ADD;
+    state.colorWriteMask = vk_all_color_components;
+    state.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    state.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    state.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+}
+
+void init_defaults(VkPipelineMultisampleStateCreateInfo& create_info)
+{
+    create_info.alphaToCoverageEnable = VK_FALSE;
+    create_info.alphaToOneEnable = VK_FALSE;
+    create_info.flags = 0;
+    create_info.minSampleShading = 0.0f;
+    create_info.pNext = nullptr;
+    create_info.pSampleMask = nullptr;
+    create_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    create_info.sampleShadingEnable = VK_FALSE;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+}
+
+void init_defaults(VkPipelineDynamicStateCreateInfo& create_info)
+{
+    create_info.dynamicStateCount = 0;
+    create_info.flags = 0;
+    create_info.pDynamicStates = nullptr;
+    create_info.pNext = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+}
+
+void init_defaults(VkPipelineLayoutCreateInfo& create_info)
+{
+    create_info.flags = 0;
+    create_info.pNext = nullptr;
+    create_info.pPushConstantRanges = nullptr;
+    create_info.pSetLayouts = nullptr;
+    create_info.pushConstantRangeCount = 0;
+    create_info.setLayoutCount = 0;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+}
+
+void init_defaults(VkDescriptorSetLayoutCreateInfo& create_info)
+{
+    create_info.bindingCount = 0;
+    create_info.flags = 0;
+    create_info.pBindings = nullptr;
+    create_info.pNext = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+}
+
+void init_defaults(VkShaderModuleCreateInfo& create_info)
+{
+    create_info.codeSize = 0;
+    create_info.flags = 0;
+    create_info.pCode = nullptr;
+    create_info.pNext = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+}
+
+void init_defaults(VkPipelineShaderStageCreateInfo& create_info)
+{
+    create_info.flags = 0;
+    create_info.module = VK_NULL_HANDLE;
+    create_info.pName = "main";
+    create_info.pNext = nullptr;
+    create_info.pSpecializationInfo = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+}
+
+void init_defaults(VkPipelineCacheCreateInfo& create_info)
+{
+    create_info.flags = 0;
+    create_info.initialDataSize = 0;
+    create_info.pInitialData = nullptr;
+    create_info.pNext = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+}
+
+void init_defaults(VkPipelineViewportStateCreateInfo& create_info)
+{
+    create_info.flags = 0;
+    create_info.pNext = nullptr;
+    create_info.pScissors = nullptr;
+    create_info.pViewports = nullptr;
+    create_info.scissorCount = 1;
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    create_info.viewportCount = 1;
+}
+
 VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_t width, uint32_t height, const VulkanContext& vulkan_context)
 {
     VkImageCreateInfo depth_image_create_info;
     init_defaults(depth_image_create_info);
-    depth_image_create_info.extent = { width, height, 1 };
+
+    VkExtent3D extent;
+    extent.width = width;
+    extent.height = height;
+    extent.depth = 1;
+    depth_image_create_info.extent = extent;
     depth_image_create_info.format = VK_FORMAT_D24_UNORM_S8_UINT;
     depth_image_create_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
@@ -337,7 +553,44 @@ void destroy_image_view(VkImageView& image_view, VkImage& vk_image, const Vulkan
     vkDestroyImage(vulkan_context.device, vk_image, vulkan_context.allocation_callbacks);
 }
 
-VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height)
+VkResult create_shader_module(VkShaderModule& shader, const VulkanContext& context, const uint8_t* text, uint32_t size)
+{
+    VkShaderModuleCreateInfo create_info;
+    init_defaults(create_info);
+    create_info.pCode = reinterpret_cast<const uint32_t*>(text);
+    create_info.codeSize = size;
+    return vkCreateShaderModule(context.device, &create_info, context.allocation_callbacks, &shader);
+}
+
+void destroy_shader_module(VkShaderModule& shader, const VulkanContext& context)
+{
+    vkDestroyShaderModule(context.device, shader, context.allocation_callbacks);
+}
+
+bool read_whole_file(std::vector<uint8_t>& data, const char* filename, const char* mode)
+{
+    FILE* f = fopen(filename, mode);
+    if (!f)
+        return false;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    data.resize(size);
+    size_t res = fread(&data[0], 1, size, f);
+    fclose(f);
+    return res == size;
+}
+
+VkResult load_shader_module(VkShaderModule& shader, const VulkanContext& context, const char* filename)
+{
+    std::vector<uint8_t> shader_data;
+    if (!read_whole_file(shader_data, filename))
+        return VK_ERROR_OUT_OF_DATE_KHR;
+    return create_shader_module(shader, context, &shader_data[0], shader_data.size());
+}
+
+VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height, bool enable_default_debug_layers)
 {
     context.width = width;
     context.height = height;
@@ -345,8 +598,25 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     context.platform_data.hinstance = GetModuleHandle(nullptr);
 #endif
 
+    if (enable_default_debug_layers)
+    {
+         // put the names of the default debug layers (took them from the LunarG sample)
+         const char* debug_layer_extensions[] = 
+         {
+            "VK_LAYER_LUNARG_threading",      "VK_LAYER_LUNARG_mem_tracker",
+            "VK_LAYER_LUNARG_object_tracker", "VK_LAYER_LUNARG_draw_state",
+            "VK_LAYER_LUNARG_param_checker",  "VK_LAYER_LUNARG_swapchain",
+            "VK_LAYER_LUNARG_device_limits",  "VK_LAYER_LUNARG_image",
+            "VK_LAYER_GOOGLE_unique_objects",
+        };
+        context.instance_debug_layers_extensions.resize(ARRAY_SIZE(debug_layer_extensions));
+        for (size_t i = 0, size = context.instance_debug_layers_extensions.size(); i < size; ++i)
+            context.instance_debug_layers_extensions[i] = debug_layer_extensions[i];
+        context.device_debug_layers_extensions = context.instance_debug_layers_extensions;
+    }
+
     // check validation layers
-    uint32_t instance_layer_count;
+    uint32_t instance_layer_count = 0;
     VkResult res = vkEnumerateInstanceLayerProperties(&instance_layer_count, nullptr);
     VULKAN_VERIFY(res, "vkEnumerateInstanceLayerProperties failed");
     if (instance_layer_count > 0)
@@ -354,7 +624,17 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
         context.instance_layer_properties.resize(instance_layer_count);
         res = vkEnumerateInstanceLayerProperties(&instance_layer_count, &context.instance_layer_properties[0]);
         VULKAN_VERIFY(res, "vkEnumerateInstanceLayerProperties failed");
-        // TODO: enable validation layers
+        context.enabled_instance_debug_layers_extensions.reserve(instance_layer_count);
+        for (uint32_t i = 0; i < instance_layer_count; ++i)
+        {
+            for (size_t j = 0, size = context.instance_debug_layers_extensions.size(); j < size; ++j)
+            {
+                if (!strcmp(context.instance_layer_properties[i].layerName, context.instance_debug_layers_extensions[j]))
+                {
+                    context.enabled_instance_debug_layers_extensions.push_back(context.instance_debug_layers_extensions[j]);
+                }
+            }
+        }
     }
 
     // check extensions
@@ -404,9 +684,37 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     create_info.enabledExtensionCount = enabled_extensions_count;
     create_info.pApplicationInfo = &app_info;
     create_info.ppEnabledExtensionNames = &context.enabled_extensions[0];
+    create_info.ppEnabledLayerNames = context.enabled_instance_debug_layers_extensions.empty() ? nullptr : 
+        &context.enabled_instance_debug_layers_extensions[0];
+    create_info.enabledLayerCount = context.enabled_instance_debug_layers_extensions.size();
 
     res = vkCreateInstance(&create_info, nullptr, &context.instance);
     VULKAN_VERIFY(res, "vkCreateInstance failed");
+
+    // get instance's extensions function pointers
+    context.extension_functions.vkCreateDebugReportCallbackEXT = 
+        (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(context.instance, "vkCreateDebugReportCallbackEXT");
+    context.extension_functions.vkDestroyDebugReportCallbackEXT =
+        (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(context.instance, "vkDestroyDebugReportCallbackEXT");
+
+    auto t = (PFN_vkEnumeratePhysicalDevices)vkGetInstanceProcAddr(context.instance, "vkEnumeratePhysicalDevices");
+
+    /*if (enable_default_debug_layers)
+    {
+        VERIFY(context.extension_functions.vkCreateDebugReportCallbackEXT != nullptr &&
+            context.extension_functions.vkDestroyDebugReportCallbackEXT != nullptr,
+            "Invalid driver", VK_ERROR_INITIALIZATION_FAILED);
+
+        VkDebugReportCallbackCreateInfoEXT dbg_create_info;
+        dbg_create_info.flags = VK_DEBUG_REPORT_DEBUG_BIT_EXT | VK_DEBUG_REPORT_INFORMATION_BIT_EXT | 
+            VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
+        dbg_create_info.pfnCallback = debug_callback;
+        dbg_create_info.pNext = nullptr;
+        dbg_create_info.pUserData = nullptr;
+        dbg_create_info.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT;
+        res = context.extension_functions.vkCreateDebugReportCallbackEXT(context.instance, &dbg_create_info, context.allocation_callbacks, &context.debug_report_callback);
+        VULKAN_VERIFY(res, "vkCreateDebugReportCallbackEXT failed");
+    }*/
 
     // GPUs
     uint32_t physical_device_count = 0;
@@ -427,7 +735,17 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
         std::vector<VkLayerProperties> properties(device_layer_count);
         res = vkEnumerateDeviceLayerProperties(context.main_gpu, &device_layer_count, &properties[0]);
         VULKAN_VERIFY(res, "vkEnumerateDeviceLayerProperties failed");
-        // TODO: enable validation layers
+        context.enabled_device_debug_layers_extensions.reserve(device_layer_count);
+        for (uint32_t i = 0; i < device_layer_count; ++i)
+        {
+            for (size_t j = 0, size = context.enabled_device_debug_layers_extensions.size(); j < size; ++j)
+            {
+                if (!strcmp(properties[i].layerName, context.device_debug_layers_extensions[j]))
+                {
+                    context.enabled_device_debug_layers_extensions.push_back(context.device_debug_layers_extensions[j]);
+                }
+            }
+        }
     }
 
     uint32_t device_extension_count = 0;
@@ -532,6 +850,9 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     device_create_info.ppEnabledExtensionNames = &context.device_enabled_extensions[0];
     device_create_info.pQueueCreateInfos = &device_queue_create_info;
     device_create_info.queueCreateInfoCount = 1;
+    device_create_info.ppEnabledLayerNames = context.enabled_device_debug_layers_extensions.empty() ? nullptr :
+        &context.enabled_device_debug_layers_extensions[0];
+    device_create_info.enabledLayerCount = context.enabled_device_debug_layers_extensions.size();
     res = vkCreateDevice(context.main_gpu, &device_create_info, context.allocation_callbacks, &context.device);
     VULKAN_VERIFY(res, "vkCreateDevice failed");
 
@@ -652,11 +973,27 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     res = vkCreateCommandPool(context.device, &command_pool_create_info, context.allocation_callbacks, &context.main_command_pool);
     VULKAN_VERIFY(res, "vkCreateCommandPool failed");
 
+    // create a semaphore that can be used as a signal when present is finished
+    VkSemaphoreCreateInfo semaphore_create_info;
+    init_defaults(semaphore_create_info);
+
+    res = vkCreateSemaphore(context.device, &semaphore_create_info, context.allocation_callbacks, &context.present_semaphore);
+    VULKAN_VERIFY(res, "vkCreateSemaphore failed");
+
+    VkPipelineCacheCreateInfo pipeline_cache_create_info;
+    init_defaults(pipeline_cache_create_info);
+    res = vkCreatePipelineCache(context.device, &pipeline_cache_create_info, context.allocation_callbacks, &context.pipeline_cache);
+    VULKAN_VERIFY(res, "vkCreatePipelineCache failed");
+
     return VK_SUCCESS;
 }
 
 void destroy_vulkan_context(VulkanContext& context)
 {
+    vkDestroyPipelineCache(context.device, context.pipeline_cache, context.allocation_callbacks);
+
+    vkDestroySemaphore(context.device, context.present_semaphore, context.allocation_callbacks);
+
     vkDestroyCommandPool(context.device, context.main_command_pool, context.allocation_callbacks);
 
     vkDestroyFramebuffer(context.device, context.main_framebuffer, context.allocation_callbacks);
@@ -672,6 +1009,8 @@ void destroy_vulkan_context(VulkanContext& context)
     vkDestroyDevice(context.device, context.allocation_callbacks);
 
     vkDestroySurfaceKHR(context.instance, context.surface, context.allocation_callbacks);
+
+    context.extension_functions.vkDestroyDebugReportCallbackEXT(context.instance, context.debug_report_callback, context.allocation_callbacks);
 
     vkDestroyInstance(context.instance, context.allocation_callbacks);
 }
