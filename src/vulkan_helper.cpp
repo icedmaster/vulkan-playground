@@ -85,13 +85,13 @@ bool wndprocess(HWND hwnd)
 }
 #endif
 
-uint32_t get_memory_type_index(const VkMemoryRequirements& requirements, const VkPhysicalDeviceMemoryProperties& memory_properties)
+uint32_t get_memory_type_index(const VkMemoryRequirements& requirements, VkFlags properties, const VkPhysicalDeviceMemoryProperties& memory_properties)
 {
     for (uint32_t i = 0; i < 32; ++i)
     {
         if (requirements.memoryTypeBits & (1 << i))
         {
-            if ((memory_properties.memoryTypes[i].propertyFlags & requirements.memoryTypeBits) == 0)
+            if ((memory_properties.memoryTypes[i].propertyFlags & properties) == properties)
                 return i;
         }
     }
@@ -369,7 +369,7 @@ void init_defaults(VkPipelineRasterizationStateCreateInfo& create_info)
     create_info.lineWidth = 0.0f;
     create_info.pNext = nullptr;
     create_info.polygonMode = VK_POLYGON_MODE_FILL;
-    create_info.rasterizerDiscardEnable = VK_TRUE;
+    create_info.rasterizerDiscardEnable = VK_FALSE;
     create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 }
 
@@ -502,6 +502,22 @@ void init_defaults(VkPipelineViewportStateCreateInfo& create_info)
     create_info.viewportCount = 1;
 }
 
+void init_defaults(VkBufferCreateInfo& create_info)
+{
+    create_info.flags = 0;
+    create_info.pNext = nullptr;
+    create_info.pQueueFamilyIndices = nullptr;
+    create_info.queueFamilyIndexCount = 0;
+    create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+}
+
+void init_defaults(VkMemoryAllocateInfo& allocate_info)
+{
+    allocate_info.pNext = nullptr;
+    allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+}
+
 VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_t width, uint32_t height, const VulkanContext& vulkan_context)
 {
     VkImageCreateInfo depth_image_create_info;
@@ -528,7 +544,7 @@ VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_
     depth_image_allocate_info.allocationSize = depth_image_memory_requirements.size;
     depth_image_allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     depth_image_allocate_info.pNext = nullptr;
-    depth_image_allocate_info.memoryTypeIndex = get_memory_type_index(depth_image_memory_requirements, vulkan_context.gpu_memory_properties);
+    depth_image_allocate_info.memoryTypeIndex = get_memory_type_index(depth_image_memory_requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vulkan_context.gpu_memory_properties);
     res = vkAllocateMemory(vulkan_context.device, &depth_image_allocate_info, vulkan_context.allocation_callbacks, &depth_image_memory);
     assert(res == VK_SUCCESS);
 
@@ -588,6 +604,96 @@ VkResult load_shader_module(VkShaderModule& shader, const VulkanContext& context
     if (!read_whole_file(shader_data, filename))
         return VK_ERROR_OUT_OF_DATE_KHR;
     return create_shader_module(shader, context, &shader_data[0], shader_data.size());
+}
+
+VkResult create_static_buffer(Buffer& buffer, const VulkanContext& context, const uint8_t* data, uint32_t size, VkBufferUsageFlags usage)
+{
+    VkBuffer src_buffer;
+    VkBufferCreateInfo buffer_create_info;
+    init_defaults(buffer_create_info);
+    buffer_create_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    buffer_create_info.size = size;
+
+    VkResult res = vkCreateBuffer(context.device, &buffer_create_info, context.allocation_callbacks, &src_buffer);
+    VULKAN_VERIFY(res, "vkCreateBuffer failed");
+
+    VkDeviceMemory src_device_memory;
+    VkMemoryRequirements buffer_memory_requirements;
+    vkGetBufferMemoryRequirements(context.device, src_buffer, &buffer_memory_requirements);
+    uint32_t memory_type = get_memory_type_index(buffer_memory_requirements, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, context.gpu_memory_properties);
+    VkMemoryAllocateInfo memory_allocate_info;
+    init_defaults(memory_allocate_info);
+    memory_allocate_info.memoryTypeIndex = memory_type;
+    memory_allocate_info.allocationSize = size;
+    res = vkAllocateMemory(context.device, &memory_allocate_info, context.allocation_callbacks, &src_device_memory);
+    VULKAN_VERIFY(res, "vkAllocateMemory failed");
+
+    void* mapped_memory = nullptr;
+    res = vkMapMemory(context.device, src_device_memory, 0, size, 0, &mapped_memory);
+    VULKAN_VERIFY(res, "vkMapMemory failed");
+    memcpy(mapped_memory, data, size);
+    vkUnmapMemory(context.device, src_device_memory);
+
+    res = vkBindBufferMemory(context.device, src_buffer, src_device_memory, 0);
+    VULKAN_VERIFY(res, "vkBindBufferMemory failed");
+
+    buffer_create_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage;
+    res = vkCreateBuffer(context.device, &buffer_create_info, context.allocation_callbacks, &buffer.buffer);
+    VULKAN_VERIFY(res, "vkCreateBuffer failed");
+
+    vkGetBufferMemoryRequirements(context.device, buffer.buffer, &buffer_memory_requirements);
+    memory_allocate_info.memoryTypeIndex = get_memory_type_index(buffer_memory_requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, context.gpu_memory_properties);
+    res = vkAllocateMemory(context.device, &memory_allocate_info, context.allocation_callbacks, &buffer.memory);
+    VULKAN_VERIFY(res, "vkAllocateMemory failed");
+
+    res = vkBindBufferMemory(context.device, buffer.buffer, buffer.memory, 0);
+    VULKAN_VERIFY(res, "vkBindBufferMemory failed");
+
+    // command buffer for copying data to the VRAM
+    VkCommandBuffer command_buffer;
+
+    VkCommandBufferAllocateInfo cb_allocate_info;
+    init_defaults(cb_allocate_info);
+    cb_allocate_info.commandBufferCount = 1;
+    cb_allocate_info.commandPool = context.main_command_pool;
+    res = vkAllocateCommandBuffers(context.device, &cb_allocate_info, &command_buffer);
+    VULKAN_VERIFY(res, "vkAllocateCommandBuffers failed");
+
+    VkCommandBufferBeginInfo begin_info;
+    init_defaults(begin_info);
+    res = vkBeginCommandBuffer(command_buffer, &begin_info);
+    VULKAN_VERIFY(res, "vkBeginCommandBuffer failed");
+
+    {
+        VkBufferCopy regions;
+        regions.srcOffset = 0;
+        regions.dstOffset = 0;
+        regions.size = size;
+        vkCmdCopyBuffer(command_buffer, src_buffer, buffer.buffer, 1, &regions);
+    }
+
+    res = vkEndCommandBuffer(command_buffer);
+    VULKAN_VERIFY(res, "vkEndCommandBuffer failed");
+
+    VkSubmitInfo submit_info;
+    init_defaults(submit_info);
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &command_buffer;
+    res = vkQueueSubmit(context.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+    VULKAN_VERIFY(res, "vkQueueSubmit failed");
+    res = vkQueueWaitIdle(context.graphics_queue);
+
+    vkFreeCommandBuffers(context.device, context.main_command_pool, 1, &command_buffer);
+    vkDestroyBuffer(context.device, src_buffer, context.allocation_callbacks);
+    vkFreeMemory(context.device, src_device_memory, context.allocation_callbacks);
+
+    return VK_SUCCESS;
+}
+
+void destroy_static_buffer(Buffer& buffer, const VulkanContext& context)
+{
+    vkDestroyBuffer(context.device, buffer.buffer, context.allocation_callbacks);
+    vkFreeMemory(context.device, buffer.memory, context.allocation_callbacks);
 }
 
 VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height, bool enable_default_debug_layers)
@@ -1010,7 +1116,8 @@ void destroy_vulkan_context(VulkanContext& context)
 
     vkDestroySurfaceKHR(context.instance, context.surface, context.allocation_callbacks);
 
-    context.extension_functions.vkDestroyDebugReportCallbackEXT(context.instance, context.debug_report_callback, context.allocation_callbacks);
+    if (context.extension_functions.vkDestroyDebugReportCallbackEXT != nullptr)
+        context.extension_functions.vkDestroyDebugReportCallbackEXT(context.instance, context.debug_report_callback, context.allocation_callbacks);
 
     vkDestroyInstance(context.instance, context.allocation_callbacks);
 }

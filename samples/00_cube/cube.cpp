@@ -7,7 +7,7 @@ using namespace mhe;
 int main(int, char**)
 {
     VulkanContext context;
-    VkResult res = init_vulkan_context(context, "vk_cube", 512, 512, true);
+    VkResult res = init_vulkan_context(context, "vk_cube", 512, 512, false);
     VERIFY(res == VK_SUCCESS, "init_vulkan_context failed", -1);
 
     // create a pipeline
@@ -17,6 +17,28 @@ int main(int, char**)
     // vertex input
     VkPipelineVertexInputStateCreateInfo vi_create_info;
     init_defaults(vi_create_info);
+
+    struct Vertex
+    {
+        vec3 pos;
+        vec3 nrm;
+    };
+
+    VkVertexInputBindingDescription binding_description;
+    binding_description.binding = 0;
+    binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    binding_description.stride = sizeof(Vertex);
+
+    VkVertexInputAttributeDescription vi_attribute_desc[2] = {
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(vec3)}
+    };
+
+    vi_create_info.pVertexAttributeDescriptions = vi_attribute_desc;
+    vi_create_info.vertexAttributeDescriptionCount = 2;
+    vi_create_info.pVertexBindingDescriptions = &binding_description;
+    vi_create_info.vertexBindingDescriptionCount = 1;
+
     pipeline_create_info.pVertexInputState = &vi_create_info;
     // input assembly
     VkPipelineInputAssemblyStateCreateInfo ia_create_info;
@@ -66,8 +88,10 @@ int main(int, char**)
     VkDescriptorSetLayout desciptor_set_layout;
     VkDescriptorSetLayoutCreateInfo desciptor_set_layout_create_info;
     init_defaults(desciptor_set_layout_create_info);
-    desciptor_set_layout_create_info.bindingCount = 3;
-    desciptor_set_layout_create_info.pBindings = layout_binding;
+    //desciptor_set_layout_create_info.bindingCount = 3;
+    desciptor_set_layout_create_info.bindingCount = 0;
+    //desciptor_set_layout_create_info.pBindings = layout_binding;
+    desciptor_set_layout_create_info.pBindings = nullptr;
     res = vkCreateDescriptorSetLayout(context.device, &desciptor_set_layout_create_info, context.allocation_callbacks, &desciptor_set_layout);
     ASSERT(res == VK_SUCCESS, "vkCreateDescriptorSetLayout failed");
     layout_create_info.pSetLayouts = &desciptor_set_layout;
@@ -78,8 +102,8 @@ int main(int, char**)
     VkPipelineShaderStageCreateInfo shader_stage_create_info;
     init_defaults(shader_stage_create_info);
     // load the shaders
-    const char* vert_shader_name = "../../shaders/00_cube.vs";
-    const char* frag_shader_name = "../../shaders/00_cube.fs";
+    const char* vert_shader_name = "../../shaders/00_cube.vertspv";
+    const char* frag_shader_name = "../../shaders/00_cube.fragspv";
     VkShaderModule vsm;
     res = load_shader_module(vsm, context, vert_shader_name);
     ASSERT(res == VK_SUCCESS, "vertex shader loading failed");
@@ -96,7 +120,7 @@ int main(int, char**)
     shader_stages[1].module = fsm;
 
     pipeline_create_info.pStages = shader_stages;
-    pipeline_create_info.stageCount = 0;
+    pipeline_create_info.stageCount = 2;
 
     pipeline_create_info.renderPass = context.main_render_pass;
 
@@ -105,6 +129,20 @@ int main(int, char**)
 
     destroy_shader_module(vsm, context);
     destroy_shader_module(fsm, context);
+
+    // create actual data
+    Buffer vbuffer;
+    Vertex vertices[3] = {
+        {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{0.0f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
+    res = create_static_buffer(vbuffer, context, reinterpret_cast<const uint8_t*>(vertices), sizeof(Vertex) * 3, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+
+    Buffer ibuffer;
+    uint16_t indices[3] = {0, 2, 1};
+    res = create_static_buffer(ibuffer, context, reinterpret_cast<const uint8_t*>(indices), sizeof(uint16_t) * 3, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
 
     // create a command buffer from the main command pool
     VkCommandBuffer command_buffer;
@@ -126,7 +164,7 @@ int main(int, char**)
         VkClearValue clear_values[2];
         VkClearColorValue clear_color_value;
         clear_color_value.float32[0] = 0.0f;
-        clear_color_value.float32[1] = 1.0f;
+        clear_color_value.float32[1] = 0.0f;
         clear_color_value.float32[2] = 0.0f;
         clear_color_value.float32[3] = 1.0f;
         clear_values[0].color = clear_color_value;
@@ -157,6 +195,13 @@ int main(int, char**)
 
         VkRect2D sciccor_rect = {0, 0, 512, 512};
         vkCmdSetScissor(command_buffer, 0, 1, &sciccor_rect);
+
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+        VkDeviceSize offsets = 0;
+        vkCmdBindVertexBuffers(command_buffer, 0, 1, &vbuffer.buffer, &offsets);
+        vkCmdBindIndexBuffer(command_buffer, ibuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
+        vkCmdDrawIndexed(command_buffer, 3, 1, 0, 0, 1);
 
         vkCmdEndRenderPass(command_buffer);
     }
@@ -192,6 +237,9 @@ int main(int, char**)
         res = vkQueueWaitIdle(context.graphics_queue);
         VERIFY(res == VK_SUCCESS, "vkQueueWaitIdle failed", -1);
     }
+
+    destroy_static_buffer(ibuffer, context);
+    destroy_static_buffer(vbuffer, context);
 
     vkDestroyPipeline(context.device, pipeline, context.allocation_callbacks);
 

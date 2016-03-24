@@ -29,6 +29,20 @@
 
 namespace mhe {
 
+template <class T>
+class vector3
+{
+public:
+    T x;
+    T y;
+    T z;
+
+    vector3() : x(0), y(0), z(0) {}
+    vector3(T newx, T newy, T newz) : x(newx), y(newy), z(newz) {}
+};
+
+typedef vector3<float> vec3;
+
 struct VulkanContext;
 
 #ifdef _WIN32
@@ -41,7 +55,7 @@ struct PlatformData
 
 const VkFlags vk_all_color_components = VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
-uint32_t get_memory_type_index(const VkMemoryRequirements& requirements, const VkPhysicalDeviceMemoryProperties& memory_properties);
+uint32_t get_memory_type_index(const VkMemoryRequirements& requirements, VkFlags properties, const VkPhysicalDeviceMemoryProperties& memory_properties);
 
 void init_defaults(VkApplicationInfo& appinfo);
 void init_defaults(VkInstanceCreateInfo& create_info);
@@ -76,6 +90,8 @@ void init_defaults(VkPipelineShaderStageCreateInfo& create_info);
 void init_defaults(VkPipelineShaderStageCreateInfo& create_info);
 void init_defaults(VkPipelineCacheCreateInfo& create_info);
 void init_defaults(VkPipelineViewportStateCreateInfo& create_info);
+void init_defaults(VkBufferCreateInfo& create_info);
+void init_defaults(VkMemoryAllocateInfo& allocate_info);
 
 VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_t width, uint32_t height, const VulkanContext& vulkan_context);
 void destroy_image_view(VkImageView& image_view, VkImage& vk_image, const VulkanContext& vulkan_context);
@@ -86,6 +102,15 @@ void destroy_shader_module(VkShaderModule& shader, const VulkanContext& context)
 bool read_whole_file(std::vector<uint8_t>& data, const char* filename, const char* mode = "rb");
 
 VkResult load_shader_module(VkShaderModule& shader, const VulkanContext& context, const char* filename);
+
+struct Buffer
+{
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+};
+
+VkResult create_static_buffer(Buffer& buffer, const VulkanContext& context, const uint8_t* data, uint32_t size, VkBufferUsageFlags usage);
+void destroy_static_buffer(Buffer& buffer, const VulkanContext& context);
 
 struct ExtensionFunctions
 {
