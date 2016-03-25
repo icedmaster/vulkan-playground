@@ -41,7 +41,70 @@ public:
     vector3(T newx, T newy, T newz) : x(newx), y(newy), z(newz) {}
 };
 
+template <class T>
+class vector4
+{
+public:
+    union
+    {
+        struct
+        {
+            T x, y, z, w;
+        };
+        
+        struct
+        {
+            T c[4];
+        };
+    };
+
+    vector4() : x(0), y(0), z(0), w(0) {}
+    vector4(T newx, T newy, T newz, T neww) : x(newx), y(newy), z(newz), w(neww) {}
+};
+
+template <class T>
+class matrix4x4
+{
+public:
+    matrix4x4()
+    {
+        load_identity();
+    }
+
+    void load_identity()
+    {
+        row0_.x = 1;
+        row1_.y = 1;
+        row2_.z = 1;
+        row3_.w = 1;
+    }
+
+    void set_uniform_scale(T s)
+    {
+        row0_.x = s;
+        row1_.y = s;
+        row2_.z = s;
+    }
+
+    static matrix4x4 identity()
+    {
+        static matrix4x4 m;
+        return m;
+    }
+
+    static matrix4x4 scaling(T s)
+    {
+        static matrix4x4 m;
+        m.set_uniform_scale(s);
+        return m;
+    }
+private:
+    vector4<T> row0_, row1_, row2_, row3_;
+};
+
 typedef vector3<float> vec3;
+typedef vector4<float> vec4;
+typedef matrix4x4<float> mat4x4;
 
 struct VulkanContext;
 
@@ -53,7 +116,7 @@ struct PlatformData
 };
 #endif
 
-const VkFlags vk_all_color_components = VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+const VkFlags vk_all_color_components = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
 uint32_t get_memory_type_index(const VkMemoryRequirements& requirements, VkFlags properties, const VkPhysicalDeviceMemoryProperties& memory_properties);
 
@@ -92,6 +155,9 @@ void init_defaults(VkPipelineCacheCreateInfo& create_info);
 void init_defaults(VkPipelineViewportStateCreateInfo& create_info);
 void init_defaults(VkBufferCreateInfo& create_info);
 void init_defaults(VkMemoryAllocateInfo& allocate_info);
+void init_defaults(VkDescriptorSetAllocateInfo& allocate_info);
+void init_defaults(VkDescriptorPoolCreateInfo& create_info);
+void init_defaults(VkWriteDescriptorSet& write_descriptor_set);
 
 VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_t width, uint32_t height, const VulkanContext& vulkan_context);
 void destroy_image_view(VkImageView& image_view, VkImage& vk_image, const VulkanContext& vulkan_context);
@@ -110,7 +176,8 @@ struct Buffer
 };
 
 VkResult create_static_buffer(Buffer& buffer, const VulkanContext& context, const uint8_t* data, uint32_t size, VkBufferUsageFlags usage);
-void destroy_static_buffer(Buffer& buffer, const VulkanContext& context);
+void destroy_buffer(Buffer& buffer, const VulkanContext& context);
+VkResult create_dynamic_buffer(Buffer& buffer, const VulkanContext& context, const uint8_t* data, uint32_t size, VkBufferUsageFlags usage);
 
 struct ExtensionFunctions
 {

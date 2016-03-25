@@ -518,6 +518,30 @@ void init_defaults(VkMemoryAllocateInfo& allocate_info)
     allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 }
 
+void init_defaults(VkDescriptorSetAllocateInfo& allocate_info)
+{
+    allocate_info.pNext = nullptr;
+    allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+}
+
+void init_defaults(VkDescriptorPoolCreateInfo& create_info)
+{
+    create_info.flags = 0;
+    create_info.pNext = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+}
+
+void init_defaults(VkWriteDescriptorSet& write_descriptor_set)
+{
+    write_descriptor_set.dstArrayElement = 0;
+    write_descriptor_set.dstBinding = 0;
+    write_descriptor_set.pBufferInfo = nullptr;
+    write_descriptor_set.pImageInfo = nullptr;
+    write_descriptor_set.pNext = nullptr;
+    write_descriptor_set.pTexelBufferView = nullptr;
+    write_descriptor_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+}
+
 VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_t width, uint32_t height, const VulkanContext& vulkan_context)
 {
     VkImageCreateInfo depth_image_create_info;
@@ -690,10 +714,42 @@ VkResult create_static_buffer(Buffer& buffer, const VulkanContext& context, cons
     return VK_SUCCESS;
 }
 
-void destroy_static_buffer(Buffer& buffer, const VulkanContext& context)
+void destroy_buffer(Buffer& buffer, const VulkanContext& context)
 {
     vkDestroyBuffer(context.device, buffer.buffer, context.allocation_callbacks);
     vkFreeMemory(context.device, buffer.memory, context.allocation_callbacks);
+}
+
+VkResult create_dynamic_buffer(Buffer& buffer, const VulkanContext& context, const uint8_t* data, uint32_t size, VkBufferUsageFlags usage)
+{
+    VkBufferCreateInfo buffer_create_info;
+    init_defaults(buffer_create_info);
+    buffer_create_info.usage = usage;
+    buffer_create_info.size = size;
+
+    VkResult res = vkCreateBuffer(context.device, &buffer_create_info, context.allocation_callbacks, &buffer.buffer);
+    VULKAN_VERIFY(res, "vkCreateBuffer failed");
+
+    VkMemoryRequirements buffer_memory_requirements;
+    vkGetBufferMemoryRequirements(context.device, buffer.buffer, &buffer_memory_requirements);
+    uint32_t memory_type = get_memory_type_index(buffer_memory_requirements, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, context.gpu_memory_properties);
+    VkMemoryAllocateInfo memory_allocate_info;
+    init_defaults(memory_allocate_info);
+    memory_allocate_info.memoryTypeIndex = memory_type;
+    memory_allocate_info.allocationSize = size;
+    res = vkAllocateMemory(context.device, &memory_allocate_info, context.allocation_callbacks, &buffer.memory);
+    VULKAN_VERIFY(res, "vkAllocateMemory failed");
+
+    void* mapped_memory = nullptr;
+    res = vkMapMemory(context.device, buffer.memory, 0, size, 0, &mapped_memory);
+    VULKAN_VERIFY(res, "vkMapMemory failed");
+    memcpy(mapped_memory, data, size);
+    vkUnmapMemory(context.device, buffer.memory);
+
+    res = vkBindBufferMemory(context.device, buffer.buffer, buffer.memory, 0);
+    VULKAN_VERIFY(res, "vkBindBufferMemory failed");
+
+    return VK_SUCCESS;
 }
 
 VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height, bool enable_default_debug_layers)

@@ -4,6 +4,21 @@
 
 using namespace mhe;
 
+struct PerModelUniformData
+{
+    mat4x4 world;
+};
+
+struct PerCameraUniformData
+{
+    mat4x4 vp;
+};
+
+struct MaterialUniformData
+{
+    vec4 diffuse;
+};
+
 int main(int, char**)
 {
     VulkanContext context;
@@ -69,7 +84,7 @@ int main(int, char**)
     init_defaults(viewport_state_create_info);
     pipeline_create_info.pViewportState = &viewport_state_create_info;
     // dynamic states
-    // TODO: need to find out what those parameters mean
+    // those states are used with a pipeline but the pipeline doesn't keep them
     VkPipelineDynamicStateCreateInfo dyn_state_create_info;
     init_defaults(dyn_state_create_info);
     VkDynamicState dynamic_states[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -83,15 +98,13 @@ int main(int, char**)
         // binding, descriptorType,                    descriptorCount, VkShaderStageFlags,       samples
         {0,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_VERTEX_BIT,   nullptr},  // camera uniform
         {1,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_VERTEX_BIT,   nullptr},  // model uniform
-        {2,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // material uniform
+        {2,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}   // material uniform
     };
     VkDescriptorSetLayout desciptor_set_layout;
     VkDescriptorSetLayoutCreateInfo desciptor_set_layout_create_info;
     init_defaults(desciptor_set_layout_create_info);
-    //desciptor_set_layout_create_info.bindingCount = 3;
-    desciptor_set_layout_create_info.bindingCount = 0;
-    //desciptor_set_layout_create_info.pBindings = layout_binding;
-    desciptor_set_layout_create_info.pBindings = nullptr;
+    desciptor_set_layout_create_info.bindingCount = 3;
+    desciptor_set_layout_create_info.pBindings = layout_binding;
     res = vkCreateDescriptorSetLayout(context.device, &desciptor_set_layout_create_info, context.allocation_callbacks, &desciptor_set_layout);
     ASSERT(res == VK_SUCCESS, "vkCreateDescriptorSetLayout failed");
     layout_create_info.pSetLayouts = &desciptor_set_layout;
@@ -102,8 +115,8 @@ int main(int, char**)
     VkPipelineShaderStageCreateInfo shader_stage_create_info;
     init_defaults(shader_stage_create_info);
     // load the shaders
-    const char* vert_shader_name = "../../shaders/00_cube.vertspv";
-    const char* frag_shader_name = "../../shaders/00_cube.fragspv";
+    const char* vert_shader_name = "../../shaders/00_cube.vert.spv";
+    const char* frag_shader_name = "../../shaders/00_cube.frag.spv";
     VkShaderModule vsm;
     res = load_shader_module(vsm, context, vert_shader_name);
     ASSERT(res == VK_SUCCESS, "vertex shader loading failed");
@@ -143,6 +156,67 @@ int main(int, char**)
     uint16_t indices[3] = {0, 2, 1};
     res = create_static_buffer(ibuffer, context, reinterpret_cast<const uint8_t*>(indices), sizeof(uint16_t) * 3, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+
+    // uniforms
+    Buffer model_uniform_buffer;
+    PerModelUniformData per_model_uniform_data;
+    per_model_uniform_data.world = mat4x4::scaling(1.0f);
+    res = create_dynamic_buffer(model_uniform_buffer, context,
+        reinterpret_cast<const uint8_t*>(&per_model_uniform_data), sizeof(PerModelUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+
+    Buffer camera_uniform_buffer;
+    PerCameraUniformData per_camera_uniform_data;
+    per_camera_uniform_data.vp = mat4x4::scaling(0.25f);
+    res = create_dynamic_buffer(camera_uniform_buffer, context,
+        reinterpret_cast<const uint8_t*>(&per_camera_uniform_data), sizeof(PerCameraUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+
+    Buffer material_uniform_buffer;
+    MaterialUniformData material_uniform_data;
+    material_uniform_data.diffuse = vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    res = create_dynamic_buffer(material_uniform_buffer, context,
+        reinterpret_cast<const uint8_t*>(&material_uniform_data), sizeof(MaterialUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+
+    // create descriptor sets
+    VkDescriptorPool descriptor_pool;
+    VkDescriptorPoolCreateInfo descriptor_pool_create_info;
+    init_defaults(descriptor_pool_create_info);
+
+    VkDescriptorPoolSize descriptor_pool_size = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+
+    descriptor_pool_create_info.maxSets = 3;
+    descriptor_pool_create_info.poolSizeCount = 1;
+    descriptor_pool_create_info.pPoolSizes = &descriptor_pool_size;
+    res = vkCreateDescriptorPool(context.device, &descriptor_pool_create_info, context.allocation_callbacks, &descriptor_pool);
+    ASSERT(res == VK_SUCCESS, "vkCreateDescriptorPool failed");
+
+    VkDescriptorSet descriptor_set[1];
+
+    VkDescriptorSetAllocateInfo descriptor_set_allocate_info;
+    init_defaults(descriptor_set_allocate_info);
+    descriptor_set_allocate_info.descriptorPool = descriptor_pool;
+    descriptor_set_allocate_info.descriptorSetCount = 1;
+    descriptor_set_allocate_info.pSetLayouts = &desciptor_set_layout;
+    res = vkAllocateDescriptorSets(context.device, &descriptor_set_allocate_info, descriptor_set);
+    ASSERT(res == VK_SUCCESS, "vkAllocateDescriptorSets failed");
+
+    // and update our descriptor set
+    VkDescriptorBufferInfo descriptor_buffer_info[3] = {
+        {camera_uniform_buffer.buffer, 0, sizeof(PerCameraUniformData)},
+        {model_uniform_buffer.buffer, 0, sizeof(PerModelUniformData)},
+        {material_uniform_buffer.buffer, 0, sizeof(MaterialUniformData)}
+    };
+
+    VkWriteDescriptorSet write_descriptor_set;
+    init_defaults(write_descriptor_set);
+    write_descriptor_set.descriptorCount = 3;
+    write_descriptor_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write_descriptor_set.dstBinding = 0;
+    write_descriptor_set.dstSet = descriptor_set[0];
+    write_descriptor_set.pBufferInfo = descriptor_buffer_info;
+    vkUpdateDescriptorSets(context.device, 1, &write_descriptor_set, 0, nullptr);
 
     // create a command buffer from the main command pool
     VkCommandBuffer command_buffer;
@@ -196,6 +270,7 @@ int main(int, char**)
         VkRect2D sciccor_rect = {0, 0, 512, 512};
         vkCmdSetScissor(command_buffer, 0, 1, &sciccor_rect);
 
+        vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_create_info.layout, 0, 1, descriptor_set, 0, nullptr);
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
         VkDeviceSize offsets = 0;
@@ -238,8 +313,15 @@ int main(int, char**)
         VERIFY(res == VK_SUCCESS, "vkQueueWaitIdle failed", -1);
     }
 
-    destroy_static_buffer(ibuffer, context);
-    destroy_static_buffer(vbuffer, context);
+    vkFreeDescriptorSets(context.device, descriptor_pool, 1, descriptor_set);
+    vkDestroyDescriptorPool(context.device, descriptor_pool, context.allocation_callbacks);
+
+    destroy_buffer(model_uniform_buffer, context);
+    destroy_buffer(camera_uniform_buffer, context);
+    destroy_buffer(material_uniform_buffer, context);
+
+    destroy_buffer(ibuffer, context);
+    destroy_buffer(vbuffer, context);
 
     vkDestroyPipeline(context.device, pipeline, context.allocation_callbacks);
 
