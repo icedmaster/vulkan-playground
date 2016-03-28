@@ -2,6 +2,8 @@
 
 #include <limits>
 
+#define CUBE
+
 using namespace mhe;
 
 struct PerModelUniformData
@@ -17,6 +19,13 @@ struct PerCameraUniformData
 struct MaterialUniformData
 {
     vec4 diffuse;
+};
+
+struct LightUniformData
+{
+    vec4 diffuse;
+    vec4 position;
+    vec4 direction;
 };
 
 int main(int, char**)
@@ -94,16 +103,17 @@ int main(int, char**)
     // layout
     VkPipelineLayoutCreateInfo layout_create_info;
     init_defaults(layout_create_info);
-    VkDescriptorSetLayoutBinding layout_binding[3] = {
+    VkDescriptorSetLayoutBinding layout_binding[4] = {
         // binding, descriptorType,                    descriptorCount, VkShaderStageFlags,       samples
         {0,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_VERTEX_BIT,   nullptr},  // camera uniform
         {1,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_VERTEX_BIT,   nullptr},  // model uniform
-        {2,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}   // material uniform
+        {2,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},   // material uniform
+        {3,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }   // light uniform
     };
     VkDescriptorSetLayout desciptor_set_layout;
     VkDescriptorSetLayoutCreateInfo desciptor_set_layout_create_info;
     init_defaults(desciptor_set_layout_create_info);
-    desciptor_set_layout_create_info.bindingCount = 3;
+    desciptor_set_layout_create_info.bindingCount = 4;
     desciptor_set_layout_create_info.pBindings = layout_binding;
     res = vkCreateDescriptorSetLayout(context.device, &desciptor_set_layout_create_info, context.allocation_callbacks, &desciptor_set_layout);
     ASSERT(res == VK_SUCCESS, "vkCreateDescriptorSetLayout failed");
@@ -146,15 +156,57 @@ int main(int, char**)
     // create actual data
     Buffer vbuffer;
     Vertex vertices[3] = {
-        {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-        {{0.0f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-        {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
+        {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{0.0f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
+
+    Vertex cube_vertices[24] = {
+        // front
+        {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{-0.5f, +0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{+0.5f, +0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{+0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        // back
+        {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}},
+        {{-0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}},
+        {{+0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}},
+        {{+0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}},
+        // left
+        {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}},
+        {{-0.5f, +0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}},
+        {{-0.5f, +0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}},
+        {{-0.5f, -0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}},
+        // right
+        {{+0.5f, -0.5f, -0.5f}, {+1.0f, 0.0f, 0.0f}},
+        {{+0.5f, +0.5f, -0.5f}, {+1.0f, 0.0f, 0.0f}},
+        {{+0.5f, +0.5f, +0.5f}, {+1.0f, 0.0f, 0.0f}},
+        {{+0.5f, -0.5f, +0.5f}, {+1.0f, 0.0f, 0.0f}},
+        // top
+        {{-0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{-0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{+0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{+0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}},
+        // bottom
+        {{-0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}},
+        {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}},
+        {{+0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}},
+        {{+0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}}
+    };
+#ifndef CUBE
     res = create_static_buffer(vbuffer, context, reinterpret_cast<const uint8_t*>(vertices), sizeof(Vertex) * 3, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+#else
+    res = create_static_buffer(vbuffer, context, reinterpret_cast<const uint8_t*>(cube_vertices), sizeof(Vertex) * 24, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+#endif
     ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
 
     Buffer ibuffer;
     uint16_t indices[3] = {0, 2, 1};
+    uint16_t cube_indices[36] = {0, 2, 1, 0, 3, 2, 7, 4, 6, 4, 5, 6, 8, 10, 9, 11, 10, 8, 12, 13, 14, 12, 14, 15, 16, 18, 17, 16, 19, 18, 20, 21, 22, 20, 22, 23};
+#ifndef CUBE
     res = create_static_buffer(ibuffer, context, reinterpret_cast<const uint8_t*>(indices), sizeof(uint16_t) * 3, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+#else
+    res = create_static_buffer(ibuffer, context, reinterpret_cast<const uint8_t*>(cube_indices), sizeof(uint16_t) * 36, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+#endif
     ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
 
     // uniforms
@@ -167,7 +219,8 @@ int main(int, char**)
 
     Buffer camera_uniform_buffer;
     PerCameraUniformData per_camera_uniform_data;
-    per_camera_uniform_data.vp = mat4x4::scaling(0.25f);
+    per_camera_uniform_data.vp = mat4x4::look_at(vec3(-2.0f, 2.0f, 10.0f), vec3(0.0f, 0.0f, 0.0f), vec3::up()) * 
+        mat4x4::perspective(deg_to_rad(60.0f), 1.0f, 0.1f, 20.0f);
     res = create_dynamic_buffer(camera_uniform_buffer, context,
         reinterpret_cast<const uint8_t*>(&per_camera_uniform_data), sizeof(PerCameraUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
@@ -177,6 +230,19 @@ int main(int, char**)
     material_uniform_data.diffuse = vec4(1.0f, 0.0f, 0.0f, 1.0f);
     res = create_dynamic_buffer(material_uniform_buffer, context,
         reinterpret_cast<const uint8_t*>(&material_uniform_data), sizeof(MaterialUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+
+    Buffer light_uniform_buffer;
+    LightUniformData light_uniform_data;
+    light_uniform_data.diffuse = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    light_uniform_data.position = vec4::zero();
+#ifndef CUBE
+    light_uniform_data.direction = vec4(0.0f, 0.0f, 1.0f, 0.0f);
+#else
+    light_uniform_data.direction = vec4(-0.707f, 0.707f, 0.0f, 0.0f);
+#endif
+    res = create_dynamic_buffer(light_uniform_buffer, context,
+        reinterpret_cast<const uint8_t*>(&light_uniform_data), sizeof(LightUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
 
     // create descriptor sets
@@ -203,15 +269,16 @@ int main(int, char**)
     ASSERT(res == VK_SUCCESS, "vkAllocateDescriptorSets failed");
 
     // and update our descriptor set
-    VkDescriptorBufferInfo descriptor_buffer_info[3] = {
+    VkDescriptorBufferInfo descriptor_buffer_info[4] = {
         {camera_uniform_buffer.buffer, 0, sizeof(PerCameraUniformData)},
         {model_uniform_buffer.buffer, 0, sizeof(PerModelUniformData)},
-        {material_uniform_buffer.buffer, 0, sizeof(MaterialUniformData)}
+        {material_uniform_buffer.buffer, 0, sizeof(MaterialUniformData)},
+        {light_uniform_buffer.buffer, 0, sizeof(LightUniformData)}
     };
 
     VkWriteDescriptorSet write_descriptor_set;
     init_defaults(write_descriptor_set);
-    write_descriptor_set.descriptorCount = 3;
+    write_descriptor_set.descriptorCount = 4;
     write_descriptor_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     write_descriptor_set.dstBinding = 0;
     write_descriptor_set.dstSet = descriptor_set[0];
@@ -276,7 +343,11 @@ int main(int, char**)
         VkDeviceSize offsets = 0;
         vkCmdBindVertexBuffers(command_buffer, 0, 1, &vbuffer.buffer, &offsets);
         vkCmdBindIndexBuffer(command_buffer, ibuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
+#ifndef CUBE
         vkCmdDrawIndexed(command_buffer, 3, 1, 0, 0, 1);
+#else
+        vkCmdDrawIndexed(command_buffer, 36, 1, 0, 0, 1);
+#endif
 
         vkCmdEndRenderPass(command_buffer);
     }

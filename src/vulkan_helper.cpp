@@ -54,7 +54,7 @@ HWND create_window(const char* name, uint32_t width, uint32_t height, HMODULE mo
         assert(0);
     }
     // Create window with the registered class:
-    RECT wr = { 0, 0, width, height };
+    RECT wr = { 0, 0, (LONG)width, (LONG)height };
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
     HWND handle = CreateWindowEx(0,
         name,           // class name
@@ -358,7 +358,7 @@ void init_defaults(VkPipelineInputAssemblyStateCreateInfo& create_info)
 
 void init_defaults(VkPipelineRasterizationStateCreateInfo& create_info)
 {
-    create_info.cullMode = VK_CULL_MODE_BACK_BIT;
+    create_info.cullMode = VK_CULL_MODE_NONE;//VK_CULL_MODE_BACK_BIT;
     create_info.depthBiasClamp = 0.0f;
     create_info.depthBiasConstantFactor = 0.0f;
     create_info.depthBiasEnable = VK_FALSE;
@@ -627,7 +627,7 @@ VkResult load_shader_module(VkShaderModule& shader, const VulkanContext& context
     std::vector<uint8_t> shader_data;
     if (!read_whole_file(shader_data, filename))
         return VK_ERROR_OUT_OF_DATE_KHR;
-    return create_shader_module(shader, context, &shader_data[0], shader_data.size());
+    return create_shader_module(shader, context, &shader_data[0], static_cast<uint32_t>(shader_data.size()));
 }
 
 VkResult create_static_buffer(Buffer& buffer, const VulkanContext& context, const uint8_t* data, uint32_t size, VkBufferUsageFlags usage)
@@ -848,7 +848,7 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     create_info.ppEnabledExtensionNames = &context.enabled_extensions[0];
     create_info.ppEnabledLayerNames = context.enabled_instance_debug_layers_extensions.empty() ? nullptr : 
         &context.enabled_instance_debug_layers_extensions[0];
-    create_info.enabledLayerCount = context.enabled_instance_debug_layers_extensions.size();
+    create_info.enabledLayerCount = static_cast<uint32_t>(context.enabled_instance_debug_layers_extensions.size());
 
     res = vkCreateInstance(&create_info, nullptr, &context.instance);
     VULKAN_VERIFY(res, "vkCreateInstance failed");
@@ -1014,7 +1014,7 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     device_create_info.queueCreateInfoCount = 1;
     device_create_info.ppEnabledLayerNames = context.enabled_device_debug_layers_extensions.empty() ? nullptr :
         &context.enabled_device_debug_layers_extensions[0];
-    device_create_info.enabledLayerCount = context.enabled_device_debug_layers_extensions.size();
+    device_create_info.enabledLayerCount = static_cast<uint32_t>(context.enabled_device_debug_layers_extensions.size());
     res = vkCreateDevice(context.main_gpu, &device_create_info, context.allocation_callbacks, &context.device);
     VULKAN_VERIFY(res, "vkCreateDevice failed");
 
