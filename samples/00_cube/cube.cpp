@@ -210,29 +210,29 @@ int main(int, char**)
     ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
 
     // uniforms
-    Buffer model_uniform_buffer;
+    UniformBuffer model_uniform_buffer;
     PerModelUniformData per_model_uniform_data;
     per_model_uniform_data.world = mat4x4::scaling(1.0f);
-    res = create_dynamic_buffer(model_uniform_buffer, context,
-        reinterpret_cast<const uint8_t*>(&per_model_uniform_data), sizeof(PerModelUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+    res = model_uniform_buffer.init(context,
+        reinterpret_cast<const uint8_t*>(&per_model_uniform_data), sizeof(PerModelUniformData));
+    ASSERT(res == VK_SUCCESS, "model_uniform_buffer initialization failed");
 
-    Buffer camera_uniform_buffer;
+    UniformBuffer camera_uniform_buffer;
     PerCameraUniformData per_camera_uniform_data;
     per_camera_uniform_data.vp = mat4x4::look_at(vec3(-2.0f, 2.0f, 10.0f), vec3(0.0f, 0.0f, 0.0f), vec3::up()) * 
         mat4x4::perspective(deg_to_rad(60.0f), 1.0f, 0.1f, 20.0f);
-    res = create_dynamic_buffer(camera_uniform_buffer, context,
-        reinterpret_cast<const uint8_t*>(&per_camera_uniform_data), sizeof(PerCameraUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+    res = camera_uniform_buffer.init(context,
+        reinterpret_cast<const uint8_t*>(&per_camera_uniform_data), sizeof(PerCameraUniformData));
+    ASSERT(res == VK_SUCCESS, "camera_uniform_buffer initialization failed");
 
-    Buffer material_uniform_buffer;
+    UniformBuffer material_uniform_buffer;
     MaterialUniformData material_uniform_data;
     material_uniform_data.diffuse = vec4(1.0f, 0.0f, 0.0f, 1.0f);
-    res = create_dynamic_buffer(material_uniform_buffer, context,
-        reinterpret_cast<const uint8_t*>(&material_uniform_data), sizeof(MaterialUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+    res = material_uniform_buffer.init(context,
+        reinterpret_cast<const uint8_t*>(&material_uniform_data), sizeof(MaterialUniformData));
+    ASSERT(res == VK_SUCCESS, "material_uniform_buffer initialization failed");
 
-    Buffer light_uniform_buffer;
+    UniformBuffer light_uniform_buffer;
     LightUniformData light_uniform_data;
     light_uniform_data.diffuse = vec4(1.0f, 1.0f, 1.0f, 1.0f);
     light_uniform_data.position = vec4::zero();
@@ -241,9 +241,9 @@ int main(int, char**)
 #else
     light_uniform_data.direction = vec4(-0.707f, 0.707f, 0.0f, 0.0f);
 #endif
-    res = create_dynamic_buffer(light_uniform_buffer, context,
-        reinterpret_cast<const uint8_t*>(&light_uniform_data), sizeof(LightUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-    ASSERT(res == VK_SUCCESS, "create_static_buffer failed");
+    res = light_uniform_buffer.init(context,
+        reinterpret_cast<const uint8_t*>(&light_uniform_data), sizeof(LightUniformData));
+    ASSERT(res == VK_SUCCESS, "light_uniform_buffer initialization failed");
 
     // create descriptor sets
     VkDescriptorPool descriptor_pool;
@@ -270,11 +270,10 @@ int main(int, char**)
 
     // and update our descriptor set
     VkDescriptorBufferInfo descriptor_buffer_info[4] = {
-        {camera_uniform_buffer.buffer, 0, sizeof(PerCameraUniformData)},
-        {model_uniform_buffer.buffer, 0, sizeof(PerModelUniformData)},
-        {material_uniform_buffer.buffer, 0, sizeof(MaterialUniformData)},
-        {light_uniform_buffer.buffer, 0, sizeof(LightUniformData)}
-    };
+        camera_uniform_buffer.descriptor_buffer_info(),
+        model_uniform_buffer.descriptor_buffer_info(),
+        material_uniform_buffer.descriptor_buffer_info(),
+        light_uniform_buffer.descriptor_buffer_info()};
 
     VkWriteDescriptorSet write_descriptor_set;
     init_defaults(write_descriptor_set);
@@ -356,9 +355,16 @@ int main(int, char**)
     ASSERT(res == VK_SUCCESS, "vkEndCommandBuffer failed");
 
     uint32_t current_buffer = 0;
+    float angle = 0.0f;
+    float rotation_speed = 0.0001f;
 
     while (app_message_loop(context))
     {
+        // update uniforms
+        angle += rotation_speed;
+        per_model_uniform_data.world = mat4x4::rotation_around_y(angle);
+        model_uniform_buffer.update(context, reinterpret_cast<const uint8_t*>(&per_model_uniform_data), sizeof(PerModelUniformData));
+
         res = vkAcquireNextImageKHR(context.device, context.swapchain, std::numeric_limits<uint64_t>::max(), context.present_semaphore, 0, &current_buffer);
         ASSERT(res == VK_SUCCESS, "vkAcquireNextImageKHR failed");
 
@@ -387,9 +393,10 @@ int main(int, char**)
     vkFreeDescriptorSets(context.device, descriptor_pool, 1, descriptor_set);
     vkDestroyDescriptorPool(context.device, descriptor_pool, context.allocation_callbacks);
 
-    destroy_buffer(model_uniform_buffer, context);
-    destroy_buffer(camera_uniform_buffer, context);
-    destroy_buffer(material_uniform_buffer, context);
+    light_uniform_buffer.destroy(context);
+    model_uniform_buffer.destroy(context);
+    camera_uniform_buffer.destroy(context);
+    material_uniform_buffer.destroy(context);
 
     destroy_buffer(ibuffer, context);
     destroy_buffer(vbuffer, context);

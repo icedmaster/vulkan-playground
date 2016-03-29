@@ -542,7 +542,7 @@ void init_defaults(VkWriteDescriptorSet& write_descriptor_set)
     write_descriptor_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 }
 
-VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_t width, uint32_t height, const VulkanContext& vulkan_context)
+VkResult create_depth_image_view(ImageView& imageview, uint32_t width, uint32_t height, const VulkanContext& vulkan_context)
 {
     VkImageCreateInfo depth_image_create_info;
     init_defaults(depth_image_create_info);
@@ -555,42 +555,40 @@ VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_
     depth_image_create_info.format = VK_FORMAT_D24_UNORM_S8_UINT;
     depth_image_create_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
-    VkImage depth_image;
-    VkResult res = vkCreateImage(vulkan_context.device, &depth_image_create_info, vulkan_context.allocation_callbacks, &depth_image);
+    VkResult res = vkCreateImage(vulkan_context.device, &depth_image_create_info, vulkan_context.allocation_callbacks, &imageview.image);
     if (res != VK_SUCCESS) return res;
 
     VkMemoryRequirements depth_image_memory_requirements;
-    vkGetImageMemoryRequirements(vulkan_context.device, depth_image, &depth_image_memory_requirements);
+    vkGetImageMemoryRequirements(vulkan_context.device, imageview.image, &depth_image_memory_requirements);
 
     // allocate memory for the depth buffer
-    VkDeviceMemory depth_image_memory;
     VkMemoryAllocateInfo depth_image_allocate_info;
     depth_image_allocate_info.allocationSize = depth_image_memory_requirements.size;
     depth_image_allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     depth_image_allocate_info.pNext = nullptr;
     depth_image_allocate_info.memoryTypeIndex = get_memory_type_index(depth_image_memory_requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vulkan_context.gpu_memory_properties);
-    res = vkAllocateMemory(vulkan_context.device, &depth_image_allocate_info, vulkan_context.allocation_callbacks, &depth_image_memory);
+    res = vkAllocateMemory(vulkan_context.device, &depth_image_allocate_info, vulkan_context.allocation_callbacks, &imageview.memory);
     assert(res == VK_SUCCESS);
 
-    res = vkBindImageMemory(vulkan_context.device, depth_image, depth_image_memory, 0);
+    res = vkBindImageMemory(vulkan_context.device, imageview.image, imageview.memory, 0);
     assert(res == VK_SUCCESS);
 
     VkImageViewCreateInfo depth_image_view_create_info;
     init_defaults(depth_image_view_create_info);
     depth_image_view_create_info.format = VK_FORMAT_D24_UNORM_S8_UINT;
-    depth_image_view_create_info.image = depth_image;
+    depth_image_view_create_info.image = imageview.image;
     depth_image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-    res = vkCreateImageView(vulkan_context.device, &depth_image_view_create_info, vulkan_context.allocation_callbacks, &imageview);
+    res = vkCreateImageView(vulkan_context.device, &depth_image_view_create_info, vulkan_context.allocation_callbacks, &imageview.imageview);
     assert(res == VK_SUCCESS);
 
-    image = depth_image;
     return VK_SUCCESS;
 }
 
-void destroy_image_view(VkImageView& image_view, VkImage& vk_image, const VulkanContext& vulkan_context)
+void destroy_image_view(ImageView& image_view, const VulkanContext& vulkan_context)
 {
-    vkDestroyImageView(vulkan_context.device, image_view, vulkan_context.allocation_callbacks);
-    vkDestroyImage(vulkan_context.device, vk_image, vulkan_context.allocation_callbacks);
+    vkDestroyImageView(vulkan_context.device, image_view.imageview, vulkan_context.allocation_callbacks);
+    vkFreeMemory(vulkan_context.device, image_view.memory, vulkan_context.allocation_callbacks);
+    vkDestroyImage(vulkan_context.device, image_view.image, vulkan_context.allocation_callbacks);
 }
 
 VkResult create_shader_module(VkShaderModule& shader, const VulkanContext& context, const uint8_t* text, uint32_t size)
@@ -752,6 +750,366 @@ VkResult create_dynamic_buffer(Buffer& buffer, const VulkanContext& context, con
     return VK_SUCCESS;
 }
 
+// vulkan initialization methods
+namespace
+{
+
+VkResult create_instance(VulkanContext& context, const char* appname)
+{
+    // check extensions
+#ifdef _WIN32
+    const char* plaform_surface_extension_name = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
+#endif
+
+    bool surface_extension_found = false;
+    bool platform_surface_extension_found = false;
+    uint32_t instance_extension_count = 0;
+    VkResult res = vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, nullptr);
+    VULKAN_VERIFY(res, "vkEnumerateInstanceExtensionProperties failed");
+    uint32_t enabled_extensions_count = 0;
+    if (instance_extension_count > 0)
+    {
+        context.instance_extension_properties.resize(instance_extension_count);
+        context.enabled_extensions.resize(instance_extension_count);
+        res = vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, &context.instance_extension_properties[0]);
+        VULKAN_VERIFY(res, "vkEnumerateInstanceExtensionProperties failed");
+        // we need the surface extensions
+        for (uint32_t i = 0; i < instance_extension_count; ++i)
+        {
+            const VkExtensionProperties& property = context.instance_extension_properties[i];
+            if (!strcmp(property.extensionName, VK_KHR_SURFACE_EXTENSION_NAME))
+            {
+                surface_extension_found = true;
+                context.enabled_extensions[enabled_extensions_count++] = property.extensionName;
+            }
+            else if (!strcmp(property.extensionName, plaform_surface_extension_name))
+            {
+                platform_surface_extension_found = true;
+                context.enabled_extensions[enabled_extensions_count++] = property.extensionName;
+            }
+        }
+    }
+
+    VERIFY(surface_extension_found && platform_surface_extension_found, "Surface extensions are not available", VK_ERROR_INITIALIZATION_FAILED);
+
+    VkApplicationInfo app_info;
+    init_defaults(app_info);
+    app_info.pApplicationName = appname;
+    app_info.pEngineName = appname;
+
+    VkInstanceCreateInfo create_info;
+    init_defaults(create_info);
+    create_info.enabledExtensionCount = enabled_extensions_count;
+    create_info.pApplicationInfo = &app_info;
+    create_info.ppEnabledExtensionNames = &context.enabled_extensions[0];
+    create_info.ppEnabledLayerNames = context.enabled_instance_debug_layers_extensions.empty() ? nullptr :
+        &context.enabled_instance_debug_layers_extensions[0];
+    create_info.enabledLayerCount = static_cast<uint32_t>(context.enabled_instance_debug_layers_extensions.size());
+
+    res = vkCreateInstance(&create_info, context.allocation_callbacks, &context.instance);
+    VULKAN_VERIFY(res, "vkCreateInstance failed");
+
+    // get instance's extensions function pointers
+    context.extension_functions.vkCreateDebugReportCallbackEXT =
+        (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(context.instance, "vkCreateDebugReportCallbackEXT");
+    context.extension_functions.vkDestroyDebugReportCallbackEXT =
+        (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(context.instance, "vkDestroyDebugReportCallbackEXT");
+    return VK_SUCCESS;
+}
+
+VkResult init_physical_device(VulkanContext& context)
+{
+    uint32_t physical_device_count = 0;
+    VkResult res = vkEnumeratePhysicalDevices(context.instance, &physical_device_count, nullptr);
+    VULKAN_VERIFY(res, "vkEnumeratePhysicalDevices failed");
+    VERIFY(physical_device_count > 0, "Invalid number of GPUs", VK_ERROR_INITIALIZATION_FAILED);
+    std::vector<VkPhysicalDevice> devices(physical_device_count);
+    res = vkEnumeratePhysicalDevices(context.instance, &physical_device_count, &devices[0]);
+    VULKAN_VERIFY(res, "vkEnumeratePhysicalDevices failed");
+    context.main_gpu = devices[0];
+
+    // now we're going to check layers and extension available for the GPU
+    uint32_t device_layer_count = 0;
+    res = vkEnumerateDeviceLayerProperties(context.main_gpu, &device_layer_count, nullptr);
+    VULKAN_VERIFY(res, "vkEnumerateDeviceLayerProperties failed");
+    if (device_layer_count > 0)
+    {
+        std::vector<VkLayerProperties> properties(device_layer_count);
+        res = vkEnumerateDeviceLayerProperties(context.main_gpu, &device_layer_count, &properties[0]);
+        VULKAN_VERIFY(res, "vkEnumerateDeviceLayerProperties failed");
+        context.enabled_device_debug_layers_extensions.reserve(device_layer_count);
+        for (uint32_t i = 0; i < device_layer_count; ++i)
+        {
+            for (size_t j = 0, size = context.enabled_device_debug_layers_extensions.size(); j < size; ++j)
+            {
+                if (!strcmp(properties[i].layerName, context.device_debug_layers_extensions[j]))
+                {
+                    context.enabled_device_debug_layers_extensions.push_back(context.device_debug_layers_extensions[j]);
+                }
+            }
+        }
+    }
+
+    return VK_SUCCESS;
+}
+
+VkResult check_physical_device_properties(VulkanContext& context)
+{
+    vkGetPhysicalDeviceProperties(context.main_gpu, &context.device_properties);
+    vkGetPhysicalDeviceMemoryProperties(context.main_gpu, &context.gpu_memory_properties);
+
+    const uint32_t max_uint32 = std::numeric_limits<uint32_t>::max();
+
+    uint32_t queue_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(context.main_gpu, &queue_count, nullptr);
+    VERIFY(queue_count > 0, "Invalid queues number", VK_ERROR_INITIALIZATION_FAILED);
+    context.queue_properties.resize(queue_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(context.main_gpu, &queue_count, &context.queue_properties[0]);
+    // check that we have a queue supporting rendering
+    bool rendering_queue_found = false;
+    bool compute_queue_found = false;
+    context.graphics_queue_family_index = max_uint32;
+    for (uint32_t i = 0; i < queue_count; ++i)
+    {
+        const VkQueueFamilyProperties& properties = context.queue_properties[i];
+        if (properties.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        {
+            rendering_queue_found = true;
+            context.graphics_queue_family_index = i;
+        }
+        if (properties.queueCount & VK_QUEUE_COMPUTE_BIT)
+            compute_queue_found = true;
+    }
+
+    VERIFY(rendering_queue_found, "Rendering queue hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
+
+    // and find the rendering queue's family index
+    context.present_queue = max_uint32;
+
+    std::vector<VkBool32> supports_present(queue_count);
+    for (uint32_t i = 0; i < queue_count; ++i)
+    {
+        VkResult res = vkGetPhysicalDeviceSurfaceSupportKHR(context.main_gpu, i, context.surface, &supports_present[i]);
+        VULKAN_VERIFY(res, "vkGetPhysicalDeviceFurfaceSupportKHR failed");
+        context.present_queue = i;
+        if (supports_present[i] == VK_TRUE && context.queue_properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        {
+            context.graphics_queue_family_index = i;
+            break;
+        }
+    }
+
+    VERIFY(context.graphics_queue_family_index != max_uint32 && context.present_queue != max_uint32,
+        "Invalid queues", VK_ERROR_INITIALIZATION_FAILED);
+
+    return VK_SUCCESS;
+}
+
+VkResult init_window(VulkanContext& context, const char* appname)
+{
+#ifdef _WIN32
+    context.platform_data.hwnd = create_window(appname, context.width, context.height, context.platform_data.hinstance);
+    if (context.platform_data.hwnd == 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    return VK_SUCCESS;
+#endif
+    return VK_ERROR_INITIALIZATION_FAILED;
+}
+
+VkResult init_surface(VulkanContext& context)
+{
+#ifdef _WIN32
+    VkWin32SurfaceCreateInfoKHR surface_info;
+    surface_info.flags = 0;
+    surface_info.hinstance = context.platform_data.hinstance;
+    surface_info.hwnd = context.platform_data.hwnd;
+    surface_info.pNext = nullptr;
+    surface_info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+
+    VkResult res = vkCreateWin32SurfaceKHR(context.instance, &surface_info, context.allocation_callbacks, &context.surface);
+    VULKAN_VERIFY(res, "vkCreateWin32SurfaceKHR failed");
+#endif
+    return VK_SUCCESS;
+}
+
+VkResult init_device(VulkanContext& context)
+{
+    uint32_t device_extension_count = 0;
+    bool swapchain_extension_found = false;
+    VkResult res = vkEnumerateDeviceExtensionProperties(context.main_gpu, nullptr, &device_extension_count, nullptr);
+    VULKAN_VERIFY(res, "vkEnumerateDeviceExtensionProperties failed");
+    std::vector<VkExtensionProperties> device_extensions;
+    uint32_t device_enabled_extensions_count = 0;
+    if (device_extension_count > 0)
+    {
+        device_extensions.resize(device_extension_count);
+        context.device_enabled_extensions.resize(device_extension_count);
+        res = vkEnumerateDeviceExtensionProperties(context.main_gpu, nullptr, &device_extension_count, &device_extensions[0]);
+        VULKAN_VERIFY(res, "vkEnumerateDeviceExtensionProperties failed");
+        // we need the swapchain extensions
+        for (uint32_t i = 0; i < device_extension_count; ++i)
+        {
+            const VkExtensionProperties& property = device_extensions[i];
+            if (!strcmp(property.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+            {
+                swapchain_extension_found = true;
+                context.device_enabled_extensions[device_enabled_extensions_count++] = property.extensionName;
+            }
+        }
+    }
+
+    VERIFY(swapchain_extension_found, "Swapchain extension hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
+
+    const float queue_priority = 0.0f;
+    VkDeviceQueueCreateInfo device_queue_create_info;
+    init_defaults(device_queue_create_info);
+    device_queue_create_info.pQueuePriorities = &queue_priority;
+    device_queue_create_info.queueCount = 1;
+    device_queue_create_info.queueFamilyIndex = context.graphics_queue_family_index;
+
+    VkDeviceCreateInfo device_create_info;
+    init_defaults(device_create_info);
+    device_create_info.enabledExtensionCount = device_enabled_extensions_count;
+    device_create_info.ppEnabledExtensionNames = &context.device_enabled_extensions[0];
+    device_create_info.pQueueCreateInfos = &device_queue_create_info;
+    device_create_info.queueCreateInfoCount = 1;
+    device_create_info.ppEnabledLayerNames = context.enabled_device_debug_layers_extensions.empty() ? nullptr :
+        &context.enabled_device_debug_layers_extensions[0];
+    device_create_info.enabledLayerCount = static_cast<uint32_t>(context.enabled_device_debug_layers_extensions.size());
+    res = vkCreateDevice(context.main_gpu, &device_create_info, context.allocation_callbacks, &context.device);
+    VULKAN_VERIFY(res, "vkCreateDevice failed");
+
+    vkGetDeviceQueue(context.device, context.graphics_queue_family_index, 0, &context.graphics_queue);
+
+    return VK_SUCCESS;
+}
+
+VkResult init_swapchain(VulkanContext& context)
+{
+    // get possible swapchain modes
+    uint32_t present_modes_count = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(context.main_gpu, context.surface, &present_modes_count, nullptr);
+    context.present_modes.resize(present_modes_count);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(context.main_gpu, context.surface, &present_modes_count, &context.present_modes[0]);
+
+    VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+    for (uint32_t i = 0; i < present_modes_count; ++i)
+    {
+        if (context.present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
+        {
+            present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+            break;
+        }
+        if (present_mode != VK_PRESENT_MODE_MAILBOX_KHR &&
+            context.present_modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR)
+            present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    }
+
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(context.main_gpu, context.surface, &context.surface_capabilities);
+
+    // create a swapchain
+    VERIFY(context.surface_capabilities.currentExtent.width == static_cast<uint32_t>(-1) ||
+        (context.surface_capabilities.currentExtent.width == context.width &&
+         context.surface_capabilities.currentExtent.height == context.height), "Invalid current extent", VK_ERROR_INITIALIZATION_FAILED);
+    VkExtent2D swapchain_extent = { context.width, context.height };
+
+    VkSwapchainCreateInfoKHR swapchain_create_info;
+    init_defaults(swapchain_create_info);
+    swapchain_create_info.imageExtent = swapchain_extent;
+    swapchain_create_info.imageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    swapchain_create_info.minImageCount = context.surface_capabilities.minImageCount;
+    swapchain_create_info.presentMode = present_mode;
+    swapchain_create_info.preTransform = context.surface_capabilities.currentTransform;
+    swapchain_create_info.surface = context.surface;
+    VkResult res = vkCreateSwapchainKHR(context.device, &swapchain_create_info, context.allocation_callbacks, &context.swapchain);
+    VULKAN_VERIFY(res, "vkCreateSwapchainKHR failed");
+
+    return VK_SUCCESS;
+}
+
+VkResult init_swapchain_images(VulkanContext& context)
+{
+    uint32_t swapchain_images_count = 0;
+    VkResult res = vkGetSwapchainImagesKHR(context.device, context.swapchain, &swapchain_images_count, nullptr);
+    VULKAN_VERIFY(res, "vkGetSwapchainImagesKHR failed");
+    context.color_imageviews.resize(swapchain_images_count);
+    std::vector<VkImage> images(swapchain_images_count);
+    res = vkGetSwapchainImagesKHR(context.device, context.swapchain, &swapchain_images_count, &images[0]);
+    VULKAN_VERIFY(res, "vkGetSwapchainImagesKHR failed");
+
+    for (uint32_t i = 0; i < swapchain_images_count; ++i)
+    {
+        context.color_imageviews[i].image = images[i];
+
+        VkImageViewCreateInfo image_view_create_info;
+        init_defaults(image_view_create_info);
+        image_view_create_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+        image_view_create_info.image = images[i];
+        image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+        res = vkCreateImageView(context.device, &image_view_create_info, context.allocation_callbacks, &context.color_imageviews[i].imageview);
+        VULKAN_VERIFY(res, "vkCreateImageView failed");
+    }
+
+    return VK_SUCCESS;
+}
+
+VkResult init_main_render_pass(VulkanContext& context)
+{
+    VkAttachmentDescription attachment_descriptions[2];
+    init_defaults(attachment_descriptions[0]);
+    init_defaults(attachment_descriptions[1]);
+    attachment_descriptions[0].format = VK_FORMAT_R8G8B8A8_UNORM;
+
+    attachment_descriptions[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    attachment_descriptions[1].format = VK_FORMAT_D24_UNORM_S8_UINT;
+    attachment_descriptions[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference color_attachment_ref;
+    color_attachment_ref.attachment = 0;
+    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference depth_attachment_ref;
+    depth_attachment_ref.attachment = 1;
+    depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass_desc;
+    init_defaults(subpass_desc);
+    subpass_desc.colorAttachmentCount = 1;
+    subpass_desc.pColorAttachments = &color_attachment_ref;
+    subpass_desc.pDepthStencilAttachment = &depth_attachment_ref;
+
+    VkRenderPassCreateInfo render_pass_create_info;
+    init_defaults(render_pass_create_info);
+    render_pass_create_info.attachmentCount = 2;
+    render_pass_create_info.pAttachments = attachment_descriptions;
+    render_pass_create_info.subpassCount = 1;
+    render_pass_create_info.pSubpasses = &subpass_desc;
+
+    VkResult res = vkCreateRenderPass(context.device, &render_pass_create_info, context.allocation_callbacks, &context.main_render_pass);
+    VULKAN_VERIFY(res, "vkCreateRenderPass failed");
+
+    return VK_SUCCESS;
+}
+
+VkResult init_main_framebuffer(VulkanContext& context)
+{
+    VkImageView main_framebuffer_attachments[2] = { context.color_imageviews[0].imageview, context.depth_image_view.imageview };
+
+    VkFramebufferCreateInfo framebuffer_create_info;
+    init_defaults(framebuffer_create_info);
+    framebuffer_create_info.attachmentCount = 2;
+    framebuffer_create_info.height = context.height;
+    framebuffer_create_info.layers = 1;
+    framebuffer_create_info.pAttachments = main_framebuffer_attachments;
+    framebuffer_create_info.renderPass = context.main_render_pass;
+    framebuffer_create_info.width = context.width;
+    VkResult res = vkCreateFramebuffer(context.device, &framebuffer_create_info, context.allocation_callbacks, &context.main_framebuffer);
+    VULKAN_VERIFY(res, "vkCreateFramebuffer failed");
+    return VK_SUCCESS;
+}
+}
+
 VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height, bool enable_default_debug_layers)
 {
     context.width = width;
@@ -799,67 +1157,9 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
         }
     }
 
-    // check extensions
-#ifdef _WIN32
-    const char* plaform_surface_extension_name = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
-#endif
-
-    bool surface_extension_found = false;
-    bool platform_surface_extension_found = false;
-    uint32_t instance_extension_count = 0;
-    res = vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, nullptr);
-    VULKAN_VERIFY(res, "vkEnumerateInstanceExtensionProperties failed");
-    uint32_t enabled_extensions_count = 0;
-    if (instance_extension_count > 0)
-    {
-        context.instance_extension_properties.resize(instance_extension_count);
-        context.enabled_extensions.resize(instance_extension_count);
-        res = vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, &context.instance_extension_properties[0]);
-        VULKAN_VERIFY(res, "vkEnumerateInstanceExtensionProperties failed");
-        // we need the surface extensions
-        for (uint32_t i = 0; i < instance_extension_count; ++i)
-        {
-            const VkExtensionProperties& property = context.instance_extension_properties[i];
-            if (!strcmp(property.extensionName, VK_KHR_SURFACE_EXTENSION_NAME))
-            {
-                surface_extension_found = true;
-                context.enabled_extensions[enabled_extensions_count++] = property.extensionName;
-            }
-            else if (!strcmp(property.extensionName, plaform_surface_extension_name))
-            {
-                platform_surface_extension_found = true;
-                context.enabled_extensions[enabled_extensions_count++] = property.extensionName;
-            }
-        }
-    }
-
-    VERIFY(surface_extension_found && platform_surface_extension_found, "Surface extensions are not available", VK_ERROR_INITIALIZATION_FAILED);
-
     // create VK instance
-    VkApplicationInfo app_info;
-    init_defaults(app_info);
-    app_info.pApplicationName = appname;
-    app_info.pEngineName = appname;
-
-    VkInstanceCreateInfo create_info;
-    init_defaults(create_info);
-    create_info.enabledExtensionCount = enabled_extensions_count;
-    create_info.pApplicationInfo = &app_info;
-    create_info.ppEnabledExtensionNames = &context.enabled_extensions[0];
-    create_info.ppEnabledLayerNames = context.enabled_instance_debug_layers_extensions.empty() ? nullptr : 
-        &context.enabled_instance_debug_layers_extensions[0];
-    create_info.enabledLayerCount = static_cast<uint32_t>(context.enabled_instance_debug_layers_extensions.size());
-
-    res = vkCreateInstance(&create_info, nullptr, &context.instance);
-    VULKAN_VERIFY(res, "vkCreateInstance failed");
-
-    // get instance's extensions function pointers
-    context.extension_functions.vkCreateDebugReportCallbackEXT = 
-        (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(context.instance, "vkCreateDebugReportCallbackEXT");
-    context.extension_functions.vkDestroyDebugReportCallbackEXT =
-        (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(context.instance, "vkDestroyDebugReportCallbackEXT");
-
-    auto t = (PFN_vkEnumeratePhysicalDevices)vkGetInstanceProcAddr(context.instance, "vkEnumeratePhysicalDevices");
+    res = create_instance(context, appname);
+    VULKAN_VERIFY(res, "create_instance failed");
 
     /*if (enable_default_debug_layers)
     {
@@ -879,254 +1179,35 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     }*/
 
     // GPUs
-    uint32_t physical_device_count = 0;
-    res = vkEnumeratePhysicalDevices(context.instance, &physical_device_count, nullptr);
-    VULKAN_VERIFY(res, "vkEnumeratePhysicalDevices failed");
-    VERIFY(physical_device_count > 0, "Invalid number of GPUs", VK_ERROR_INITIALIZATION_FAILED);
-    std::vector<VkPhysicalDevice> devices(physical_device_count);
-    res = vkEnumeratePhysicalDevices(context.instance, &physical_device_count, &devices[0]);
-    VULKAN_VERIFY(res, "vkEnumeratePhysicalDevices failed");
-    context.main_gpu = devices[0];
+    res = init_physical_device(context);
+    VULKAN_VERIFY(res, "init_physical_device failed");
 
-    // now we're going to check layers and extension available for the GPU
-    uint32_t device_layer_count = 0;
-    res = vkEnumerateDeviceLayerProperties(context.main_gpu, &device_layer_count, nullptr);
-    VULKAN_VERIFY(res, "vkEnumerateDeviceLayerProperties failed");
-    if (device_layer_count > 0)
-    {
-        std::vector<VkLayerProperties> properties(device_layer_count);
-        res = vkEnumerateDeviceLayerProperties(context.main_gpu, &device_layer_count, &properties[0]);
-        VULKAN_VERIFY(res, "vkEnumerateDeviceLayerProperties failed");
-        context.enabled_device_debug_layers_extensions.reserve(device_layer_count);
-        for (uint32_t i = 0; i < device_layer_count; ++i)
-        {
-            for (size_t j = 0, size = context.enabled_device_debug_layers_extensions.size(); j < size; ++j)
-            {
-                if (!strcmp(properties[i].layerName, context.device_debug_layers_extensions[j]))
-                {
-                    context.enabled_device_debug_layers_extensions.push_back(context.device_debug_layers_extensions[j]);
-                }
-            }
-        }
-    }
+    res = check_physical_device_properties(context);
+    VULKAN_VERIFY(res, "check_physical_device_properties failed");
 
-    uint32_t device_extension_count = 0;
-    bool swapchain_extension_found = false;
-    res = vkEnumerateDeviceExtensionProperties(context.main_gpu, nullptr, &device_extension_count, nullptr);
-    VULKAN_VERIFY(res, "vkEnumerateDeviceExtensionProperties failed");
-    std::vector<VkExtensionProperties> device_extensions;
-    uint32_t device_enabled_extensions_count = 0;
-    if (device_extension_count > 0)
-    {
-        device_extensions.resize(device_extension_count);
-        context.device_enabled_extensions.resize(device_extension_count);
-        res = vkEnumerateDeviceExtensionProperties(context.main_gpu, nullptr, &device_extension_count, &device_extensions[0]);
-        VULKAN_VERIFY(res, "vkEnumerateDeviceExtensionProperties failed");
-        // we need the swapchain extensions
-        for (uint32_t i = 0; i < device_extension_count; ++i)
-        {
-            const VkExtensionProperties& property = device_extensions[i];
-            if (!strcmp(property.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
-            {
-                swapchain_extension_found = true;
-                context.device_enabled_extensions[device_enabled_extensions_count++] = property.extensionName;
-            }
-        }
-    }
+    res = init_window(context, appname);
+    VULKAN_VERIFY(res, "init_window failed");
 
-    VERIFY(swapchain_extension_found, "Swapchain extension hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
+    res = init_surface(context);
+    VULKAN_VERIFY(res, "init_surface failed");
 
-    vkGetPhysicalDeviceProperties(context.main_gpu, &context.device_properties);
-    vkGetPhysicalDeviceMemoryProperties(context.main_gpu, &context.gpu_memory_properties);
+    res = init_device(context);
+    VULKAN_VERIFY(res, "init_device failed");
 
-    const uint32_t max_uint32 = std::numeric_limits<uint32_t>::max();
+    res = init_swapchain(context);
+    VULKAN_VERIFY(res, "init_swapchain failed");
 
-    uint32_t queue_count = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(context.main_gpu, &queue_count, nullptr);
-    VERIFY(queue_count > 0, "Invalid queues number", VK_ERROR_INITIALIZATION_FAILED);
-    context.queue_properties.resize(queue_count);
-    vkGetPhysicalDeviceQueueFamilyProperties(context.main_gpu, &queue_count, &context.queue_properties[0]);
-    // check that we have a queue supporting rendering
-    bool rendering_queue_found = false;
-    bool compute_queue_found = false;
-    context.graphics_queue_family_index = max_uint32;
-    for (uint32_t i = 0; i < queue_count; ++i)
-    {
-        const VkQueueFamilyProperties& properties = context.queue_properties[i];
-        if (properties.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-        {
-            rendering_queue_found = true;
-            context.graphics_queue_family_index = i;
-        }
-        if (properties.queueCount & VK_QUEUE_COMPUTE_BIT)
-            compute_queue_found = true;
-    }
-
-    VERIFY(rendering_queue_found, "Rendering queue hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
-
-#ifdef _WIN32
-    context.platform_data.hwnd = create_window(appname, width, height, context.platform_data.hinstance);
-#endif
-
-    // create a surface
-#ifdef _WIN32
-    VkWin32SurfaceCreateInfoKHR surface_info;
-    surface_info.flags = 0;
-    surface_info.hinstance = context.platform_data.hinstance;
-    surface_info.hwnd = context.platform_data.hwnd;
-    surface_info.pNext = nullptr;
-    surface_info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-
-    res = vkCreateWin32SurfaceKHR(context.instance, &surface_info, context.allocation_callbacks, &context.surface);
-    VULKAN_VERIFY(res, "vkCreateWin32SurfaceKHR failed");
-#endif
-
-    context.present_queue = max_uint32;
-
-    std::vector<VkBool32> supports_present(queue_count);
-    for (uint32_t i = 0; i < queue_count; ++i)
-    {
-        res = vkGetPhysicalDeviceSurfaceSupportKHR(context.main_gpu, i, context.surface, &supports_present[i]);
-        VULKAN_VERIFY(res, "vkGetPhysicalDeviceFurfaceSupportKHR failed");
-        context.present_queue = i;
-        if (supports_present[i] == VK_TRUE && context.queue_properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-        {
-            context.graphics_queue_family_index = i;
-            break;
-        }
-    }
-
-    VERIFY(context.graphics_queue_family_index != max_uint32 && context.present_queue != max_uint32,
-           "Invalid queues", VK_ERROR_INITIALIZATION_FAILED);
-
-    const float queue_priority = 0.0f;
-    VkDeviceQueueCreateInfo device_queue_create_info;
-    init_defaults(device_queue_create_info);
-    device_queue_create_info.pQueuePriorities = &queue_priority;
-    device_queue_create_info.queueCount = 1;
-    device_queue_create_info.queueFamilyIndex = context.graphics_queue_family_index;
-
-    VkDeviceCreateInfo device_create_info;
-    init_defaults(device_create_info);
-    device_create_info.enabledExtensionCount = device_enabled_extensions_count;
-    device_create_info.ppEnabledExtensionNames = &context.device_enabled_extensions[0];
-    device_create_info.pQueueCreateInfos = &device_queue_create_info;
-    device_create_info.queueCreateInfoCount = 1;
-    device_create_info.ppEnabledLayerNames = context.enabled_device_debug_layers_extensions.empty() ? nullptr :
-        &context.enabled_device_debug_layers_extensions[0];
-    device_create_info.enabledLayerCount = static_cast<uint32_t>(context.enabled_device_debug_layers_extensions.size());
-    res = vkCreateDevice(context.main_gpu, &device_create_info, context.allocation_callbacks, &context.device);
-    VULKAN_VERIFY(res, "vkCreateDevice failed");
-
-    vkGetDeviceQueue(context.device, context.graphics_queue_family_index, 0, &context.graphics_queue);
-
-    res = create_depth_image_view(context.depth_image_view, context.depth_image, width, height, context);
+    res = create_depth_image_view(context.depth_image_view, width, height, context);
     VULKAN_VERIFY(res, "create_depth_image_view failed");
 
-    // get possible swapchain modes
-    uint32_t present_modes_count = 0;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(context.main_gpu, context.surface, &present_modes_count, nullptr);
-    context.present_modes.resize(present_modes_count);
-    vkGetPhysicalDeviceSurfacePresentModesKHR(context.main_gpu, context.surface, &present_modes_count, &context.present_modes[0]);
+    res = init_swapchain_images(context);
+    VULKAN_VERIFY(res, "init_swapchain_images failed");
 
-    VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-    for (uint32_t i = 0; i < present_modes_count; ++i)
-    {
-        if (context.present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
-        {
-            present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-            break;
-        }
-        if (present_mode != VK_PRESENT_MODE_MAILBOX_KHR &&
-            context.present_modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR)
-            present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
-    }
+    res = init_main_render_pass(context);
+    VULKAN_VERIFY(res, "init_main_render_pass failed");
 
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(context.main_gpu, context.surface, &context.surface_capabilities);
-
-    // create a swapchain
-    VERIFY(context.surface_capabilities.currentExtent.width == static_cast<uint32_t>(-1) ||
-           context.surface_capabilities.currentExtent.width == width, "Invalid current extent", VK_ERROR_INITIALIZATION_FAILED);
-    VkExtent2D swapchain_extent = { width, height };
-
-    VkSwapchainCreateInfoKHR swapchain_create_info;
-    init_defaults(swapchain_create_info);
-    swapchain_create_info.imageExtent = swapchain_extent;
-    swapchain_create_info.imageFormat = VK_FORMAT_R8G8B8A8_UNORM;
-    swapchain_create_info.minImageCount = context.surface_capabilities.minImageCount;
-    swapchain_create_info.presentMode = present_mode;
-    swapchain_create_info.preTransform = context.surface_capabilities.currentTransform;
-    swapchain_create_info.surface = context.surface;
-    res = vkCreateSwapchainKHR(context.device, &swapchain_create_info, context.allocation_callbacks, &context.swapchain);
-    VULKAN_VERIFY(res, "vkCreateSwapchainKHR failed");
-
-    uint32_t swapchain_images_count = 0;
-    res = vkGetSwapchainImagesKHR(context.device, context.swapchain, &swapchain_images_count, nullptr);
-    VULKAN_VERIFY(res, "vkGetSwapchainImagesKHR failed");
-    context.color_images.resize(swapchain_images_count);
-    res = vkGetSwapchainImagesKHR(context.device, context.swapchain, &swapchain_images_count, &context.color_images[0]);
-    VULKAN_VERIFY(res, "vkGetSwapchainImagesKHR failed");
-
-    context.color_imageviews.resize(swapchain_images_count);
-    for (uint32_t i = 0; i < swapchain_images_count; ++i)
-    {
-        VkImageViewCreateInfo image_view_create_info;
-        init_defaults(image_view_create_info);
-        image_view_create_info.format = VK_FORMAT_R8G8B8A8_UNORM;;
-        image_view_create_info.image = context.color_images[i];
-        image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-
-        res = vkCreateImageView(context.device, &image_view_create_info, context.allocation_callbacks, &context.color_imageviews[i]);
-        VULKAN_VERIFY(res, "vkCreateImageView failed");
-    }
-
-    // create the main render pass
-    VkAttachmentDescription attachment_descriptions[2];
-    init_defaults(attachment_descriptions[0]);
-    init_defaults(attachment_descriptions[1]);
-    attachment_descriptions[0].format = VK_FORMAT_R8G8B8A8_UNORM;
-
-    attachment_descriptions[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    attachment_descriptions[1].format = VK_FORMAT_D24_UNORM_S8_UINT;
-    attachment_descriptions[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference color_attachment_ref;
-    color_attachment_ref.attachment = 0;
-    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference depth_attachment_ref;
-    depth_attachment_ref.attachment = 1;
-    depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkSubpassDescription subpass_desc;
-    init_defaults(subpass_desc);
-    subpass_desc.colorAttachmentCount = 1;
-    subpass_desc.pColorAttachments = &color_attachment_ref;
-    subpass_desc.pDepthStencilAttachment = &depth_attachment_ref;
-
-    VkRenderPassCreateInfo render_pass_create_info;
-    init_defaults(render_pass_create_info);
-    render_pass_create_info.attachmentCount = 2;
-    render_pass_create_info.pAttachments = attachment_descriptions;
-    render_pass_create_info.subpassCount = 1;
-    render_pass_create_info.pSubpasses = &subpass_desc;
-
-    res = vkCreateRenderPass(context.device, &render_pass_create_info, context.allocation_callbacks, &context.main_render_pass);
-    VULKAN_VERIFY(res, "vkCreateRenderPass failed");
-
-    // create the main framebuffer
-    VkImageView main_framebuffer_attachments[2] = { context.color_imageviews[0], context.depth_image_view };
-
-    VkFramebufferCreateInfo framebuffer_create_info;
-    init_defaults(framebuffer_create_info);
-    framebuffer_create_info.attachmentCount = 2;
-    framebuffer_create_info.height = 512;
-    framebuffer_create_info.layers = 1;
-    framebuffer_create_info.pAttachments = main_framebuffer_attachments;
-    framebuffer_create_info.renderPass = context.main_render_pass;
-    framebuffer_create_info.width = 512;
-    res = vkCreateFramebuffer(context.device, &framebuffer_create_info, context.allocation_callbacks, &context.main_framebuffer);
-    VULKAN_VERIFY(res, "vkCreateFramebuffer failed");
+    res = init_main_framebuffer(context);
+    VULKAN_VERIFY(res, "init_main_framebuffer failed");
 
     VkCommandPoolCreateInfo command_pool_create_info;
     init_defaults(command_pool_create_info);
@@ -1162,11 +1243,11 @@ void destroy_vulkan_context(VulkanContext& context)
     vkDestroyRenderPass(context.device, context.main_render_pass, context.allocation_callbacks);
 
     for (size_t i = 0, size = context.color_imageviews.size(); i < size; ++i)
-        vkDestroyImageView(context.device, context.color_imageviews[i], context.allocation_callbacks);
+        vkDestroyImageView(context.device, context.color_imageviews[i].imageview, context.allocation_callbacks);
 
     vkDestroySwapchainKHR(context.device, context.swapchain, context.allocation_callbacks);
 
-    destroy_image_view(context.depth_image_view, context.depth_image, context);
+    destroy_image_view(context.depth_image_view, context);
 
     vkDestroyDevice(context.device, context.allocation_callbacks);
 
@@ -1183,6 +1264,31 @@ bool app_message_loop(VulkanContext& context)
 #ifdef _WIN32
     return wndprocess(context.platform_data.hwnd);
 #endif
+}
+
+VkResult UniformBuffer::init(VulkanContext& context, const uint8_t* data, uint32_t size)
+{
+    VkResult res = create_dynamic_buffer(buffer_, context, data, size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    VERIFY(res == VK_SUCCESS, "create_dynamic_buffer failed", res);
+    descriptor_buffer_info_.buffer = buffer_.buffer;
+    descriptor_buffer_info_.offset = 0;
+    descriptor_buffer_info_.range = size;
+    return VK_SUCCESS;
+}
+
+void UniformBuffer::destroy(VulkanContext& context)
+{
+    destroy_buffer(buffer_, context);
+}
+
+VkResult UniformBuffer::update(VulkanContext& context, const uint8_t* data, uint32_t size)
+{
+    void* dst = nullptr;
+    VkResult res = vkMapMemory(context.device, buffer_.memory, 0, size, 0, &dst);
+    VULKAN_VERIFY(res, "vkMapMemory failed");
+    memcpy(dst, data, size);
+    vkUnmapMemory(context.device, buffer_.memory);
+    return VK_SUCCESS;
 }
 
 }

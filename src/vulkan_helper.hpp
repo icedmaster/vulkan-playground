@@ -263,6 +263,19 @@ public:
         return m;
     }
 
+    static matrix4x4 rotation_around_y(T angle)
+    {
+        T s = sin(angle);
+        T c = cos(angle);
+
+        static matrix4x4 m;
+        m.set(c, 0, s, 0,
+              0, 1, 0, 0,
+              -s, 0, c, 0,
+              0, 0, 0, 1);
+        return m;
+    }
+
     static matrix4x4 look_at(const vector3<T>& pos, const vector3<T>& dir, const vector3<T>& up)
     {
         static matrix4x4 m;
@@ -314,6 +327,8 @@ typedef vector4<float> vec4;
 typedef matrix4x4<float> mat4x4;
 
 struct VulkanContext;
+struct Buffer;
+struct ImageView;
 
 #ifdef _WIN32
 struct PlatformData
@@ -366,8 +381,8 @@ void init_defaults(VkDescriptorSetAllocateInfo& allocate_info);
 void init_defaults(VkDescriptorPoolCreateInfo& create_info);
 void init_defaults(VkWriteDescriptorSet& write_descriptor_set);
 
-VkResult create_depth_image_view(VkImageView& imageview, VkImage& image, uint32_t width, uint32_t height, const VulkanContext& vulkan_context);
-void destroy_image_view(VkImageView& image_view, VkImage& vk_image, const VulkanContext& vulkan_context);
+VkResult create_depth_image_view(ImageView& image_view, uint32_t width, uint32_t height, const VulkanContext& vulkan_context);
+void destroy_image_view(ImageView& image_view, const VulkanContext& vulkan_context);
 
 VkResult create_shader_module(VkShaderModule& shader, const VulkanContext& context, const uint8_t* text, uint32_t size);
 void destroy_shader_module(VkShaderModule& shader, const VulkanContext& context);
@@ -379,6 +394,13 @@ VkResult load_shader_module(VkShaderModule& shader, const VulkanContext& context
 struct Buffer
 {
     VkBuffer buffer;
+    VkDeviceMemory memory;
+};
+
+struct ImageView
+{
+    VkImage image;
+    VkImageView imageview;
     VkDeviceMemory memory;
 };
 
@@ -430,10 +452,8 @@ struct VulkanContext
     VkSwapchainKHR swapchain;
 
     // main framebuffer
-    VkImage depth_image;
-    VkImageView depth_image_view;
-    std::vector<VkImage> color_images;
-    std::vector<VkImageView> color_imageviews;
+    ImageView depth_image_view;
+    std::vector<ImageView> color_imageviews;
     VkRenderPass main_render_pass;
     VkFramebuffer main_framebuffer;
 
@@ -450,6 +470,23 @@ struct VulkanContext
     VulkanContext() :
         allocation_callbacks(nullptr)
     {}
+};
+
+class UniformBuffer
+{
+public:
+    VkResult init(VulkanContext& context, const uint8_t* data, uint32_t size);
+    void destroy(VulkanContext& context);
+
+    VkResult update(VulkanContext& context, const uint8_t* data, uint32_t size);
+
+    const VkDescriptorBufferInfo& descriptor_buffer_info() const
+    {
+        return descriptor_buffer_info_;
+    }
+private:
+    Buffer buffer_;
+    VkDescriptorBufferInfo descriptor_buffer_info_;
 };
 
 VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height, bool enable_default_debug_layers);
