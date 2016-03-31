@@ -46,6 +46,7 @@ int main(int, char**)
     {
         vec3 pos;
         vec3 nrm;
+        vec2 tex;
     };
 
     VkVertexInputBindingDescription binding_description;
@@ -53,13 +54,14 @@ int main(int, char**)
     binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
     binding_description.stride = sizeof(Vertex);
 
-    VkVertexInputAttributeDescription vi_attribute_desc[2] = {
+    VkVertexInputAttributeDescription vi_attribute_desc[3] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(vec3)}
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(vec3)},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT, 2 * sizeof(vec3)}
     };
 
     vi_create_info.pVertexAttributeDescriptions = vi_attribute_desc;
-    vi_create_info.vertexAttributeDescriptionCount = 2;
+    vi_create_info.vertexAttributeDescriptionCount = 3;
     vi_create_info.pVertexBindingDescriptions = &binding_description;
     vi_create_info.vertexBindingDescriptionCount = 1;
 
@@ -103,17 +105,18 @@ int main(int, char**)
     // layout
     VkPipelineLayoutCreateInfo layout_create_info;
     init_defaults(layout_create_info);
-    VkDescriptorSetLayoutBinding layout_binding[4] = {
+    VkDescriptorSetLayoutBinding layout_binding[5] = {
         // binding, descriptorType,                    descriptorCount, VkShaderStageFlags,       samples
         {0,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_VERTEX_BIT,   nullptr},  // camera uniform
         {1,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_VERTEX_BIT,   nullptr},  // model uniform
-        {2,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},   // material uniform
-        {3,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }   // light uniform
+        {2,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},  // material uniform
+        {3,         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // light uniform
+        {4,         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,       VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}   // texture 
     };
     VkDescriptorSetLayout desciptor_set_layout;
     VkDescriptorSetLayoutCreateInfo desciptor_set_layout_create_info;
     init_defaults(desciptor_set_layout_create_info);
-    desciptor_set_layout_create_info.bindingCount = 4;
+    desciptor_set_layout_create_info.bindingCount = 5;
     desciptor_set_layout_create_info.pBindings = layout_binding;
     res = vkCreateDescriptorSetLayout(context.device, &desciptor_set_layout_create_info, context.allocation_callbacks, &desciptor_set_layout);
     ASSERT(res == VK_SUCCESS, "vkCreateDescriptorSetLayout failed");
@@ -156,41 +159,41 @@ int main(int, char**)
     // create actual data
     Buffer vbuffer;
     Vertex vertices[3] = {
-        {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-        {{0.0f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-        {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
+        {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+        {{0.0f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+        {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}}};
 
     Vertex cube_vertices[24] = {
         // front
-        {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-        {{-0.5f, +0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-        {{+0.5f, +0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-        {{+0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+        {{-0.5f, +0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+        {{+0.5f, +0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+        {{+0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
         // back
-        {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}},
-        {{-0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}},
-        {{+0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}},
-        {{+0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}},
+        {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
+        {{-0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
+        {{+0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
+        {{+0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
         // left
-        {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}},
-        {{-0.5f, +0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}},
-        {{-0.5f, +0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}},
-        {{-0.5f, -0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}},
+        {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+        {{-0.5f, +0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+        {{-0.5f, +0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.5f, -0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
         // right
-        {{+0.5f, -0.5f, -0.5f}, {+1.0f, 0.0f, 0.0f}},
-        {{+0.5f, +0.5f, -0.5f}, {+1.0f, 0.0f, 0.0f}},
-        {{+0.5f, +0.5f, +0.5f}, {+1.0f, 0.0f, 0.0f}},
-        {{+0.5f, -0.5f, +0.5f}, {+1.0f, 0.0f, 0.0f}},
+        {{+0.5f, -0.5f, -0.5f}, {+1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+        {{+0.5f, +0.5f, -0.5f}, {+1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+        {{+0.5f, +0.5f, +0.5f}, {+1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+        {{+0.5f, -0.5f, +0.5f}, {+1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
         // top
-        {{-0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{-0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{+0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{+0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{-0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{-0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+        {{+0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{+0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
         // bottom
-        {{-0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}},
-        {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}},
-        {{+0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}},
-        {{+0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}}
+        {{-0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
+        {{+0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{+0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}}
     };
 #ifndef CUBE
     res = create_static_buffer(vbuffer, context, reinterpret_cast<const uint8_t*>(vertices), sizeof(Vertex) * 3, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -212,14 +215,14 @@ int main(int, char**)
     // uniforms
     UniformBuffer model_uniform_buffer;
     PerModelUniformData per_model_uniform_data;
-    per_model_uniform_data.world = mat4x4::scaling(1.0f);
+    per_model_uniform_data.world = mat4x4::scaling(4.0f);
     res = model_uniform_buffer.init(context,
         reinterpret_cast<const uint8_t*>(&per_model_uniform_data), sizeof(PerModelUniformData));
     ASSERT(res == VK_SUCCESS, "model_uniform_buffer initialization failed");
 
     UniformBuffer camera_uniform_buffer;
     PerCameraUniformData per_camera_uniform_data;
-    per_camera_uniform_data.vp = mat4x4::look_at(vec3(-2.0f, 2.0f, 10.0f), vec3(0.0f, 0.0f, 0.0f), vec3::up()) * 
+    per_camera_uniform_data.vp = mat4x4::look_at(vec3(-2.0f, 4.0f, 10.0f), vec3(0.0f, 0.0f, 0.0f), vec3::up()) * 
         mat4x4::perspective(deg_to_rad(60.0f), 1.0f, 0.1f, 20.0f);
     res = camera_uniform_buffer.init(context,
         reinterpret_cast<const uint8_t*>(&per_camera_uniform_data), sizeof(PerCameraUniformData));
@@ -227,14 +230,14 @@ int main(int, char**)
 
     UniformBuffer material_uniform_buffer;
     MaterialUniformData material_uniform_data;
-    material_uniform_data.diffuse = vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    material_uniform_data.diffuse = vec4(1.0f, 1.0f, 1.0f, 1.0f);
     res = material_uniform_buffer.init(context,
         reinterpret_cast<const uint8_t*>(&material_uniform_data), sizeof(MaterialUniformData));
     ASSERT(res == VK_SUCCESS, "material_uniform_buffer initialization failed");
 
     UniformBuffer light_uniform_buffer;
     LightUniformData light_uniform_data;
-    light_uniform_data.diffuse = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    light_uniform_data.diffuse = vec4(0.8f, 1.0f, 0.8f, 1.0f);
     light_uniform_data.position = vec4::zero();
 #ifndef CUBE
     light_uniform_data.direction = vec4(0.0f, 0.0f, 1.0f, 0.0f);
@@ -245,16 +248,31 @@ int main(int, char**)
         reinterpret_cast<const uint8_t*>(&light_uniform_data), sizeof(LightUniformData));
     ASSERT(res == VK_SUCCESS, "light_uniform_buffer initialization failed");
 
+    // load an image
+    Image image;
+    res = load_image(image, "../../assets/checker.tga");
+    ASSERT(res == VK_SUCCESS, "image loading failed");
+    // create a texture
+    Texture texture;
+    TextureDesc texture_desc;
+    texture_desc.width = image.width;
+    texture_desc.height = image.height;
+    texture_desc.format = image.format;
+    res = texture.init(context, texture_desc, &image.data[0], image.data.size());
+    ASSERT(res == VK_SUCCESS, "texture initialization failed");
+
     // create descriptor sets
     VkDescriptorPool descriptor_pool;
     VkDescriptorPoolCreateInfo descriptor_pool_create_info;
     init_defaults(descriptor_pool_create_info);
 
-    VkDescriptorPoolSize descriptor_pool_size = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+    VkDescriptorPoolSize descriptor_pool_size[2] = {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
 
     descriptor_pool_create_info.maxSets = 3;
-    descriptor_pool_create_info.poolSizeCount = 1;
-    descriptor_pool_create_info.pPoolSizes = &descriptor_pool_size;
+    descriptor_pool_create_info.poolSizeCount = 2;
+    descriptor_pool_create_info.pPoolSizes = descriptor_pool_size;
     res = vkCreateDescriptorPool(context.device, &descriptor_pool_create_info, context.allocation_callbacks, &descriptor_pool);
     ASSERT(res == VK_SUCCESS, "vkCreateDescriptorPool failed");
 
@@ -283,6 +301,15 @@ int main(int, char**)
     write_descriptor_set.dstSet = descriptor_set[0];
     write_descriptor_set.pBufferInfo = descriptor_buffer_info;
     vkUpdateDescriptorSets(context.device, 1, &write_descriptor_set, 0, nullptr);
+
+    VkWriteDescriptorSet image_write_descriptor_set;
+    init_defaults(image_write_descriptor_set);
+    image_write_descriptor_set.descriptorCount = 1;
+    image_write_descriptor_set.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    image_write_descriptor_set.dstBinding = 4;
+    image_write_descriptor_set.dstSet = descriptor_set[0];
+    image_write_descriptor_set.pImageInfo = &texture.descriptor_image_info();
+    vkUpdateDescriptorSets(context.device, 1, &image_write_descriptor_set, 0, nullptr);
 
     // create a command buffer from the main command pool
     VkCommandBuffer command_buffer;
@@ -362,7 +389,7 @@ int main(int, char**)
     {
         // update uniforms
         angle += rotation_speed;
-        per_model_uniform_data.world = mat4x4::rotation_around_y(angle);
+        per_model_uniform_data.world = mat4x4::scaling(4.0f) * mat4x4::rotation_around_y(angle);
         model_uniform_buffer.update(context, reinterpret_cast<const uint8_t*>(&per_model_uniform_data), sizeof(PerModelUniformData));
 
         res = vkAcquireNextImageKHR(context.device, context.swapchain, std::numeric_limits<uint64_t>::max(), context.present_semaphore, 0, &current_buffer);
@@ -389,6 +416,8 @@ int main(int, char**)
         res = vkQueueWaitIdle(context.graphics_queue);
         VERIFY(res == VK_SUCCESS, "vkQueueWaitIdle failed", -1);
     }
+
+    texture.destroy(context);
 
     vkFreeDescriptorSets(context.device, descriptor_pool, 1, descriptor_set);
     vkDestroyDescriptorPool(context.device, descriptor_pool, context.allocation_callbacks);

@@ -38,6 +38,17 @@ T deg_to_rad(T d)
 }
 
 template <class T>
+class vector2
+{
+public:
+    T x;
+    T y;
+
+    vector2() : x(0), y(0) {}
+    vector2(T newx, T newy) : x(newx), y(newy) {}
+};
+
+template <class T>
 class vector3
 {
 public:
@@ -322,6 +333,7 @@ matrix4x4<T> transpose(const matrix4x4<T>& m)
     return m.transposed();
 }
 
+typedef vector2<float> vec2;
 typedef vector3<float> vec3;
 typedef vector4<float> vec4;
 typedef matrix4x4<float> mat4x4;
@@ -338,6 +350,8 @@ struct PlatformData
 };
 #endif
 
+// extend errors enum
+const VkResult VK_MHE_ERROR_DATA_PROCESSING = static_cast<VkResult>(-20000001);
 const VkFlags vk_all_color_components = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
 uint32_t get_memory_type_index(const VkMemoryRequirements& requirements, VkFlags properties, const VkPhysicalDeviceMemoryProperties& memory_properties);
@@ -380,8 +394,10 @@ void init_defaults(VkMemoryAllocateInfo& allocate_info);
 void init_defaults(VkDescriptorSetAllocateInfo& allocate_info);
 void init_defaults(VkDescriptorPoolCreateInfo& create_info);
 void init_defaults(VkWriteDescriptorSet& write_descriptor_set);
+void init_defaults(VkSamplerCreateInfo& create_info);
 
 VkResult create_depth_image_view(ImageView& image_view, uint32_t width, uint32_t height, const VulkanContext& vulkan_context);
+VkResult create_image_view(ImageView& image_view, uint32_t width, uint32_t height, VkFormat format, const uint8_t* data, uint32_t size, const VulkanContext& vulkan_context);
 void destroy_image_view(ImageView& image_view, const VulkanContext& vulkan_context);
 
 VkResult create_shader_module(VkShaderModule& shader, const VulkanContext& context, const uint8_t* text, uint32_t size);
@@ -407,6 +423,16 @@ struct ImageView
 VkResult create_static_buffer(Buffer& buffer, const VulkanContext& context, const uint8_t* data, uint32_t size, VkBufferUsageFlags usage);
 void destroy_buffer(Buffer& buffer, const VulkanContext& context);
 VkResult create_dynamic_buffer(Buffer& buffer, const VulkanContext& context, const uint8_t* data, uint32_t size, VkBufferUsageFlags usage);
+
+struct Image
+{
+    std::vector<uint8_t> data;
+    uint32_t width;
+    uint32_t height;
+    VkFormat format;
+};
+
+VkResult load_image(Image& image, const char* filename);
 
 struct ExtensionFunctions
 {
@@ -487,6 +513,29 @@ public:
 private:
     Buffer buffer_;
     VkDescriptorBufferInfo descriptor_buffer_info_;
+};
+
+struct TextureDesc
+{
+    uint32_t width;
+    uint32_t height;
+    VkFormat format;
+};
+
+class Texture
+{
+public:
+    VkResult init(VulkanContext& context, const TextureDesc& desc, const uint8_t* data, uint32_t size);
+    void destroy(VulkanContext& context);
+
+    const VkDescriptorImageInfo& descriptor_image_info() const
+    {
+        return descriptor_image_info_;
+    }
+private:
+    ImageView imageview_;
+    VkSampler sampler_;
+    VkDescriptorImageInfo descriptor_image_info_;
 };
 
 VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height, bool enable_default_debug_layers);

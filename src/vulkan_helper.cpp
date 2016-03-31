@@ -542,6 +542,28 @@ void init_defaults(VkWriteDescriptorSet& write_descriptor_set)
     write_descriptor_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 }
 
+void init_defaults(VkSamplerCreateInfo& create_info)
+{
+    create_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    create_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    create_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    create_info.anisotropyEnable = VK_FALSE;
+    create_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    create_info.compareEnable = VK_FALSE;
+    create_info.compareOp = VK_COMPARE_OP_ALWAYS;
+    create_info.flags = 0;
+    create_info.magFilter = VK_FILTER_LINEAR;
+    create_info.maxAnisotropy = 0.0f;
+    create_info.maxLod = 1.0f;
+    create_info.minFilter = VK_FILTER_LINEAR;
+    create_info.minLod = 0.0f;
+    create_info.mipLodBias = 0.0f;
+    create_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    create_info.pNext = nullptr;
+    create_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    create_info.unnormalizedCoordinates = VK_FALSE;
+}
+
 VkResult create_depth_image_view(ImageView& imageview, uint32_t width, uint32_t height, const VulkanContext& vulkan_context)
 {
     VkImageCreateInfo depth_image_create_info;
@@ -580,6 +602,109 @@ VkResult create_depth_image_view(ImageView& imageview, uint32_t width, uint32_t 
     depth_image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
     res = vkCreateImageView(vulkan_context.device, &depth_image_view_create_info, vulkan_context.allocation_callbacks, &imageview.imageview);
     assert(res == VK_SUCCESS);
+
+    return VK_SUCCESS;
+}
+
+VkResult create_image_view(ImageView& image_view, uint32_t width, uint32_t height, VkFormat format,
+    const uint8_t* data, uint32_t size, const VulkanContext& vulkan_context)
+{
+    VkImage src_image;
+    VkDeviceMemory src_memory;
+
+    VkImageCreateInfo image_create_info;
+    init_defaults(image_create_info);
+
+    image_create_info.extent = {width, height, 1};
+    image_create_info.format = format;
+    image_create_info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    // TODO: check this parameter
+    image_create_info.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+    image_create_info.tiling = VK_IMAGE_TILING_LINEAR;
+
+    VkResult res = vkCreateImage(vulkan_context.device, &image_create_info, vulkan_context.allocation_callbacks, &src_image);
+    VULKAN_VERIFY(res, "vkCreateImage failed");
+
+    VkMemoryRequirements image_memory_requirements;
+    vkGetImageMemoryRequirements(vulkan_context.device, src_image, &image_memory_requirements);
+
+    // allocate memory for the depth buffer
+    VkMemoryAllocateInfo allocate_info;
+    allocate_info.allocationSize = image_memory_requirements.size;
+    allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate_info.pNext = nullptr;
+    allocate_info.memoryTypeIndex = get_memory_type_index(image_memory_requirements, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, vulkan_context.gpu_memory_properties);
+    res = vkAllocateMemory(vulkan_context.device, &allocate_info, vulkan_context.allocation_callbacks, &src_memory);
+    VULKAN_VERIFY(res, "vkAllocateMemory failed");
+
+    res = vkBindImageMemory(vulkan_context.device, src_image, src_memory, 0);
+    VULKAN_VERIFY(res, "vkBindImageMemory failed");
+
+    void* dst = nullptr;
+    res = vkMapMemory(vulkan_context.device, src_memory, 0, size, 0, &dst);
+    VULKAN_VERIFY(res, "vkMapMemory failed");
+    memcpy(dst, data, size);
+    vkUnmapMemory(vulkan_context.device, src_memory);
+
+    image_create_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    res = vkCreateImage(vulkan_context.device, &image_create_info, vulkan_context.allocation_callbacks, &image_view.image);
+    VULKAN_VERIFY(res, "vkCreateImage failed");
+
+    vkGetImageMemoryRequirements(vulkan_context.device, image_view.image, &image_memory_requirements);
+    allocate_info.memoryTypeIndex = get_memory_type_index(image_memory_requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vulkan_context.gpu_memory_properties);
+    res = vkAllocateMemory(vulkan_context.device, &allocate_info, vulkan_context.allocation_callbacks, &image_view.memory);
+    VULKAN_VERIFY(res, "vkAllocateMemory failed");
+    res = vkBindImageMemory(vulkan_context.device, image_view.image, image_view.memory, 0);
+    VULKAN_VERIFY(res, "vkBindImageMemory failed");
+
+    // command buffer for copying data to the VRAM
+    VkCommandBuffer command_buffer;
+
+    VkCommandBufferAllocateInfo cb_allocate_info;
+    init_defaults(cb_allocate_info);
+    cb_allocate_info.commandBufferCount = 1;
+    cb_allocate_info.commandPool = vulkan_context.main_command_pool;
+    res = vkAllocateCommandBuffers(vulkan_context.device, &cb_allocate_info, &command_buffer);
+    VULKAN_VERIFY(res, "vkAllocateCommandBuffers failed");
+
+    VkCommandBufferBeginInfo begin_info;
+    init_defaults(begin_info);
+    res = vkBeginCommandBuffer(command_buffer, &begin_info);
+    VULKAN_VERIFY(res, "vkBeginCommandBuffer failed");
+
+    VkImageCopy image_copy = {};
+    image_copy.extent = {width, height, 1};
+    image_copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    image_copy.srcSubresource.baseArrayLayer = 0;
+    image_copy.srcSubresource.layerCount = 1;
+    image_copy.srcSubresource.mipLevel = 0;
+    image_copy.dstSubresource = image_copy.srcSubresource;
+    vkCmdCopyImage(command_buffer, src_image, VK_IMAGE_LAYOUT_PREINITIALIZED, image_view.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &image_copy);
+
+    res = vkEndCommandBuffer(command_buffer);
+    VULKAN_VERIFY(res, "vkEndCommandBuffer failed");
+
+    VkSubmitInfo submit_info;
+    init_defaults(submit_info);
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &command_buffer;
+    res = vkQueueSubmit(vulkan_context.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+    VULKAN_VERIFY(res, "vkQueueSubmit failed");
+    res = vkQueueWaitIdle(vulkan_context.graphics_queue);
+    VULKAN_VERIFY(res, "vkQueueWaitIdle failed");
+
+    vkFreeCommandBuffers(vulkan_context.device, vulkan_context.main_command_pool, 1, &command_buffer);
+
+    VkImageViewCreateInfo image_view_create_info;
+    init_defaults(image_view_create_info);
+    image_view_create_info.format = format;
+    image_view_create_info.image = image_view.image;
+    res = vkCreateImageView(vulkan_context.device, &image_view_create_info, vulkan_context.allocation_callbacks, &image_view.imageview);
+    VULKAN_VERIFY(res, "vkCreateImageView failed");
+
+    vkFreeMemory(vulkan_context.device, src_memory, vulkan_context.allocation_callbacks);
+    vkDestroyImage(vulkan_context.device, src_image, vulkan_context.allocation_callbacks);
 
     return VK_SUCCESS;
 }
@@ -704,6 +829,7 @@ VkResult create_static_buffer(Buffer& buffer, const VulkanContext& context, cons
     res = vkQueueSubmit(context.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
     VULKAN_VERIFY(res, "vkQueueSubmit failed");
     res = vkQueueWaitIdle(context.graphics_queue);
+    VULKAN_VERIFY(res, "vkQueueWaitIdle failed");
 
     vkFreeCommandBuffers(context.device, context.main_command_pool, 1, &command_buffer);
     vkDestroyBuffer(context.device, src_buffer, context.allocation_callbacks);
@@ -748,6 +874,60 @@ VkResult create_dynamic_buffer(Buffer& buffer, const VulkanContext& context, con
     VULKAN_VERIFY(res, "vkBindBufferMemory failed");
 
     return VK_SUCCESS;
+}
+
+namespace
+{
+struct TGAHeader
+{
+    char header[12];
+};
+
+struct TGA
+{
+    char header[6];
+};
+
+const char uncompressed_tga_header[12] = { 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+const char uncompressed_tga_header_bw[12] = { 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+bool load_uncompressed_tga(Image& image, FILE* f)
+{
+    TGA tga;
+    fread(tga.header, sizeof(tga.header), 1, f);
+    image.width = (tga.header[1] << 8) | tga.header[0];
+    image.height = (tga.header[3] << 8) | tga.header[2];
+    // format
+    uint8_t bpp = tga.header[4];
+    if (bpp < 24) return false;
+    size_t size = image.width * image.height * (bpp / 8);
+    image.data.resize(size);
+    fread(reinterpret_cast<char*>(&image.data[0]), size, 1, f);
+    image.format = bpp == 32 ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8_SRGB;
+
+    return true;
+}
+
+bool load_tga_image(Image& image, FILE* f)
+{
+    TGAHeader header;
+    fread(header.header, sizeof(header.header), 1, f);
+    if (::memcmp(header.header, uncompressed_tga_header, 12) && ::memcmp(header.header, uncompressed_tga_header_bw, 12))
+    {
+        ASSERT(false, "Only uncompressed TGA images are supported now");
+        return false;
+    }
+    return load_uncompressed_tga(image, f);
+}
+}
+
+VkResult load_image(Image& image, const char* filename)
+{
+    FILE* f = fopen(filename, "rb");
+    if (f == nullptr) return VK_MHE_ERROR_DATA_PROCESSING;
+    bool result = load_tga_image(image, f);
+    fclose(f);
+    return result ? VK_SUCCESS : VK_MHE_ERROR_DATA_PROCESSING;
 }
 
 // vulkan initialization methods
@@ -1289,6 +1469,29 @@ VkResult UniformBuffer::update(VulkanContext& context, const uint8_t* data, uint
     memcpy(dst, data, size);
     vkUnmapMemory(context.device, buffer_.memory);
     return VK_SUCCESS;
+}
+
+VkResult Texture::init(VulkanContext& context, const TextureDesc& desc, const uint8_t* data, uint32_t size)
+{
+    VkResult res = create_image_view(imageview_, desc.width, desc.height, desc.format, data, size, context);
+    VULKAN_VERIFY(res, "create_image_view failed");
+
+    VkSamplerCreateInfo sampler_create_info;
+    init_defaults(sampler_create_info);
+    res = vkCreateSampler(context.device, &sampler_create_info, context.allocation_callbacks, &sampler_);
+    VULKAN_VERIFY(res, "vkCreateSampler failed");
+
+    descriptor_image_info_.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    descriptor_image_info_.imageView = imageview_.imageview;
+    descriptor_image_info_.sampler = sampler_;
+
+    return VK_SUCCESS;
+}
+
+void Texture::destroy(VulkanContext& context)
+{
+    vkDestroySampler(context.device, sampler_, context.allocation_callbacks);
+    destroy_image_view(imageview_, context);
 }
 
 }
