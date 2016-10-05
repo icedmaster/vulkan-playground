@@ -21,9 +21,11 @@
 
 #define VERIFY(condition, text, result) if (!(condition)) {VERIFY_PRINT(text); return result;}
 
-#define VULKAN_VERIFY(res, text) VERIFY(res == VK_SUCCESS, text, res)
-
 #define ASSERT(condition, text) if (!(condition)) {VERIFY_PRINT(text);}
+
+#define VULKAN_VERIFY(res, text) VERIFY(res == VK_SUCCESS, text, res)
+#define VK_CHECK(x) if (x != VK_SUCCESS) VERIFY_PRINT("");
+#define VK_VERIFY(x) {VkResult res = x; if (res != VK_SUCCESS) {VERIFY_PRINT(""); return res;}}
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
@@ -338,6 +340,8 @@ typedef vector3<float> vec3;
 typedef vector4<float> vec4;
 typedef matrix4x4<float> mat4x4;
 
+namespace vk {
+
 struct VulkanContext;
 struct Buffer;
 struct ImageView;
@@ -353,6 +357,8 @@ struct PlatformData
 // extend errors enum
 const VkResult VK_MHE_ERROR_DATA_PROCESSING = static_cast<VkResult>(-20000001);
 const VkFlags vk_all_color_components = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+const uint32_t invalid_index = std::numeric_limits<uint32_t>::max();
 
 uint32_t get_memory_type_index(const VkMemoryRequirements& requirements, VkFlags properties, const VkPhysicalDeviceMemoryProperties& memory_properties);
 
@@ -395,6 +401,125 @@ void init_defaults(VkDescriptorSetAllocateInfo& allocate_info);
 void init_defaults(VkDescriptorPoolCreateInfo& create_info);
 void init_defaults(VkWriteDescriptorSet& write_descriptor_set);
 void init_defaults(VkSamplerCreateInfo& create_info);
+
+struct ApplicationInfo
+{
+    VkStructureType    sType;
+    const void*        pNext;
+    const char*        pApplicationName;
+    uint32_t           applicationVersion;
+    const char*        pEngineName;
+    uint32_t           engineVersion;
+    uint32_t           apiVersion;
+
+    ApplicationInfo(const char* applicationName, uint32_t version, const char* engineName, uint32_t engineVersion) :
+        sType(VK_STRUCTURE_TYPE_APPLICATION_INFO),
+        pNext(nullptr),
+        apiVersion(VK_API_VERSION),
+        pApplicationName(applicationName), applicationVersion(version),
+        pEngineName(engineName), engineVersion(engineVersion)
+    {}
+
+    operator const VkApplicationInfo&() const
+    {
+        return *reinterpret_cast<const VkApplicationInfo*>(this);
+    }
+
+    const VkApplicationInfo* c_struct() const
+    {
+        return reinterpret_cast<const VkApplicationInfo*>(this);
+    }
+};
+static_assert(sizeof(ApplicationInfo) == sizeof(VkApplicationInfo), "Size of the C++ structure does not match the size of the C structure");
+
+struct InstanceCreateInfo
+{
+    VkStructureType             sType;
+    const void*                 pNext;
+    VkInstanceCreateFlags       flags;
+    const VkApplicationInfo*    pApplicationInfo;
+    uint32_t                    enabledLayerCount;
+    const char* const*          ppEnabledLayerNames;
+    uint32_t                    enabledExtensionCount;
+    const char* const*          ppEnabledExtensionNames;
+
+    InstanceCreateInfo(const ApplicationInfo* appinfo, uint32_t enabledLayerCount, const char* const* enabledLayerNames,
+        uint32_t enabledExtensionCount, const char* const* enabledExtensionNames) :
+        sType(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO),
+        pNext(nullptr), flags(0),
+        pApplicationInfo(appinfo->c_struct()),
+        enabledLayerCount(enabledLayerCount), ppEnabledLayerNames(enabledLayerNames),
+        enabledExtensionCount(enabledExtensionCount), ppEnabledExtensionNames(enabledExtensionNames)
+    {}
+
+    operator const VkInstanceCreateInfo&() const
+    {
+        return *reinterpret_cast<const VkInstanceCreateInfo*>(this);
+    }
+
+    const VkInstanceCreateInfo* c_struct() const
+    {
+        return reinterpret_cast<const VkInstanceCreateInfo*>(this);
+    }
+};
+static_assert(sizeof(InstanceCreateInfo) == sizeof(VkInstanceCreateInfo), "Size of the C++ structure does not match the size of the C structure");
+
+struct DeviceQueueCreateInfo
+{
+    VkStructureType             sType;
+    const void*                 pNext;
+    VkDeviceQueueCreateFlags    flags;
+    uint32_t                    queueFamilyIndex;
+    uint32_t                    queueCount;
+    const float*                pQueuePriorities;
+
+    DeviceQueueCreateInfo(uint32_t queueFamilyIndex, uint32_t queueCount, const float* queuePriorities) :
+        sType(VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO),
+        pNext(nullptr),
+        flags(0),
+        queueFamilyIndex(queueFamilyIndex),
+        queueCount(queueCount), pQueuePriorities(queuePriorities)
+    {}
+
+    const VkDeviceQueueCreateInfo *c_struct() const
+    {
+        return reinterpret_cast<const VkDeviceQueueCreateInfo*>(this);
+    }
+};
+static_assert(sizeof(DeviceQueueCreateInfo) == sizeof(VkDeviceQueueCreateInfo), "Size of the C++ structure does not match the size of the C structure");
+
+struct DeviceCreateInfo
+{
+    VkStructureType                    sType;
+    const void*                        pNext;
+    VkDeviceCreateFlags                flags;
+    uint32_t                           queueCreateInfoCount;
+    const VkDeviceQueueCreateInfo*     pQueueCreateInfos;
+    uint32_t                           enabledLayerCount;
+    const char* const*                 ppEnabledLayerNames;
+    uint32_t                           enabledExtensionCount;
+    const char* const*                 ppEnabledExtensionNames;
+    const VkPhysicalDeviceFeatures*    pEnabledFeatures;
+
+    DeviceCreateInfo(uint32_t queueCreateInfoCount, DeviceQueueCreateInfo* queueCreateInfos,
+        uint32_t enabledLayerCount, const char* const* enabledLayerNames,
+        uint32_t enabledExtensionCount, const char* const* enabledExtensionNames,
+        const VkPhysicalDeviceFeatures* enabledFeatures) :
+        sType(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO),
+        pNext(nullptr),
+        flags(0),
+        queueCreateInfoCount(queueCreateInfoCount), pQueueCreateInfos(reinterpret_cast<VkDeviceQueueCreateInfo*>(queueCreateInfos)),
+        enabledLayerCount(enabledLayerCount), ppEnabledLayerNames(enabledLayerNames),
+        enabledExtensionCount(enabledExtensionCount), ppEnabledExtensionNames(enabledExtensionNames),
+        pEnabledFeatures(enabledFeatures)
+    {}
+
+    const VkDeviceCreateInfo* c_struct() const
+    {
+        return reinterpret_cast<const VkDeviceCreateInfo*>(this);
+    }
+};
+static_assert(sizeof(DeviceCreateInfo) == sizeof(VkDeviceCreateInfo), "Size of the C++ structure does not match the size of the C structure");
 
 VkResult create_depth_image_view(ImageView& image_view, uint32_t width, uint32_t height, const VulkanContext& vulkan_context);
 VkResult create_image_view(ImageView& image_view, uint32_t width, uint32_t height, VkFormat format, const uint8_t* data, uint32_t size, const VulkanContext& vulkan_context);
@@ -440,13 +565,69 @@ struct ExtensionFunctions
     PFN_vkDestroyDebugReportCallbackEXT vkDestroyDebugReportCallbackEXT;
 };
 
+class PhysicalDevice
+{
+public:
+    PhysicalDevice() :
+        id_(VK_NULL_HANDLE),
+        graphics_queue_family_index_(invalid_index),
+        present_queue_family_index_(invalid_index),
+        surface_(VK_NULL_HANDLE)
+    {}
+
+    VkResult init(VulkanContext& context, VkPhysicalDevice id);
+    void destroy(VulkanContext& context);
+
+    operator VkPhysicalDevice()
+    {
+        return id_;
+    }
+
+    VkPhysicalDevice id() const
+    {
+        return id_;
+    }
+
+    uint32_t graphics_queue_family_index() const
+    {
+        return graphics_queue_family_index_;
+    }
+private:
+    VkResult check_properties();
+
+    VkPhysicalDevice id_;
+    VkPhysicalDeviceProperties properties_;
+    VkPhysicalDeviceMemoryProperties memory_properties_;
+    std::vector<VkQueueFamilyProperties> queue_properties_;
+    std::vector<const char*> enabled_device_debug_layers_extensions;
+    uint32_t graphics_queue_family_index_;
+    uint32_t present_queue_family_index_;
+    VkSurfaceKHR surface_;
+};
+
+class Device
+{
+public:
+    Device() :
+        id_(VK_NULL_HANDLE),
+        graphics_queue_(VK_NULL_HANDLE)
+    {}
+
+    VkResult init(VulkanContext& context, PhysicalDevice* physical_device);
+    void destroy(VulkanContext& context);
+private:
+    PhysicalDevice* physical_device_;
+    VkDevice id_;
+    VkQueue graphics_queue_;
+    std::vector<const char*> device_enabled_extensions_;
+};
+
 struct VulkanContext
 {
     std::vector<const char*> instance_debug_layers_extensions;
     std::vector<const char*> enabled_instance_debug_layers_extensions;
 
     std::vector<const char*> device_debug_layers_extensions;
-    std::vector<const char*> enabled_device_debug_layers_extensions;
 
     VkDebugReportCallbackEXT debug_report_callback;
 
@@ -456,12 +637,7 @@ struct VulkanContext
     std::vector<VkLayerProperties> instance_layer_properties;
     std::vector<VkExtensionProperties> instance_extension_properties;
     std::vector<const char*> enabled_extensions;
-    std::vector<const char*> device_enabled_extensions;
-    std::vector<VkQueueFamilyProperties> queue_properties;
     std::vector<VkPresentModeKHR> present_modes;
-
-    VkPhysicalDeviceProperties device_properties;
-    VkPhysicalDeviceMemoryProperties gpu_memory_properties;
 
     VkSurfaceCapabilitiesKHR surface_capabilities;
 
@@ -471,10 +647,11 @@ struct VulkanContext
     uint32_t height;
 
     VkInstance instance;
-    VkPhysicalDevice main_gpu;
+    std::vector<PhysicalDevice> gpus;
+    PhysicalDevice* main_gpu;
     VkSurfaceKHR surface;
-    VkDevice device;
-    VkQueue graphics_queue;
+    std::vector<Device> devices;
+    Device* main_device;
     VkSwapchainKHR swapchain;
 
     // main framebuffer
@@ -543,7 +720,7 @@ void destroy_vulkan_context(VulkanContext& context);
 
 bool app_message_loop(VulkanContext& context);
 
-}
+}}
 
 #endif
 

@@ -3,6 +3,7 @@
 #include <limits>
 
 namespace mhe {
+namespace vk {
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkFlags msgFlags, VkDebugReportObjectTypeEXT objType,
                                               uint64_t srcObject, size_t location, int32_t msgCode,
@@ -944,15 +945,13 @@ VkResult create_instance(VulkanContext& context, const char* appname)
     bool surface_extension_found = false;
     bool platform_surface_extension_found = false;
     uint32_t instance_extension_count = 0;
-    VkResult res = vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, nullptr);
-    VULKAN_VERIFY(res, "vkEnumerateInstanceExtensionProperties failed");
+    VK_CHECK(vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, nullptr));
     uint32_t enabled_extensions_count = 0;
     if (instance_extension_count > 0)
     {
         context.instance_extension_properties.resize(instance_extension_count);
         context.enabled_extensions.resize(instance_extension_count);
-        res = vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, &context.instance_extension_properties[0]);
-        VULKAN_VERIFY(res, "vkEnumerateInstanceExtensionProperties failed");
+        VK_CHECK(vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, &context.instance_extension_properties[0]));
         // we need the surface extensions
         for (uint32_t i = 0; i < instance_extension_count; ++i)
         {
@@ -972,115 +971,37 @@ VkResult create_instance(VulkanContext& context, const char* appname)
 
     VERIFY(surface_extension_found && platform_surface_extension_found, "Surface extensions are not available", VK_ERROR_INITIALIZATION_FAILED);
 
-    VkApplicationInfo app_info;
-    init_defaults(app_info);
-    app_info.pApplicationName = appname;
-    app_info.pEngineName = appname;
+    ApplicationInfo app_info(appname, 0, appname, 0);
 
-    VkInstanceCreateInfo create_info;
-    init_defaults(create_info);
-    create_info.enabledExtensionCount = enabled_extensions_count;
-    create_info.pApplicationInfo = &app_info;
-    create_info.ppEnabledExtensionNames = &context.enabled_extensions[0];
-    create_info.ppEnabledLayerNames = context.enabled_instance_debug_layers_extensions.empty() ? nullptr :
-        &context.enabled_instance_debug_layers_extensions[0];
-    create_info.enabledLayerCount = static_cast<uint32_t>(context.enabled_instance_debug_layers_extensions.size());
+    InstanceCreateInfo create_info(&app_info,
+        static_cast<uint32_t>(context.enabled_instance_debug_layers_extensions.size()),
+        context.enabled_instance_debug_layers_extensions.empty() ? nullptr : &context.enabled_instance_debug_layers_extensions[0],
+        enabled_extensions_count, &context.enabled_extensions[0]);
 
-    res = vkCreateInstance(&create_info, context.allocation_callbacks, &context.instance);
-    VULKAN_VERIFY(res, "vkCreateInstance failed");
+    VK_CHECK(vkCreateInstance(create_info.c_struct(), context.allocation_callbacks, &context.instance));
 
     // get instance's extensions function pointers
     context.extension_functions.vkCreateDebugReportCallbackEXT =
         (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(context.instance, "vkCreateDebugReportCallbackEXT");
     context.extension_functions.vkDestroyDebugReportCallbackEXT =
         (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(context.instance, "vkDestroyDebugReportCallbackEXT");
+
     return VK_SUCCESS;
 }
 
 VkResult init_physical_device(VulkanContext& context)
 {
     uint32_t physical_device_count = 0;
-    VkResult res = vkEnumeratePhysicalDevices(context.instance, &physical_device_count, nullptr);
-    VULKAN_VERIFY(res, "vkEnumeratePhysicalDevices failed");
+    VK_CHECK(vkEnumeratePhysicalDevices(context.instance, &physical_device_count, nullptr));
     VERIFY(physical_device_count > 0, "Invalid number of GPUs", VK_ERROR_INITIALIZATION_FAILED);
+    context.gpus.resize(physical_device_count);
     std::vector<VkPhysicalDevice> devices(physical_device_count);
-    res = vkEnumeratePhysicalDevices(context.instance, &physical_device_count, &devices[0]);
-    VULKAN_VERIFY(res, "vkEnumeratePhysicalDevices failed");
-    context.main_gpu = devices[0];
+    VK_CHECK(vkEnumeratePhysicalDevices(context.instance, &physical_device_count, &devices[0]));
 
-    // now we're going to check layers and extension available for the GPU
-    uint32_t device_layer_count = 0;
-    res = vkEnumerateDeviceLayerProperties(context.main_gpu, &device_layer_count, nullptr);
-    VULKAN_VERIFY(res, "vkEnumerateDeviceLayerProperties failed");
-    if (device_layer_count > 0)
-    {
-        std::vector<VkLayerProperties> properties(device_layer_count);
-        res = vkEnumerateDeviceLayerProperties(context.main_gpu, &device_layer_count, &properties[0]);
-        VULKAN_VERIFY(res, "vkEnumerateDeviceLayerProperties failed");
-        context.enabled_device_debug_layers_extensions.reserve(device_layer_count);
-        for (uint32_t i = 0; i < device_layer_count; ++i)
-        {
-            for (size_t j = 0, size = context.enabled_device_debug_layers_extensions.size(); j < size; ++j)
-            {
-                if (!strcmp(properties[i].layerName, context.device_debug_layers_extensions[j]))
-                {
-                    context.enabled_device_debug_layers_extensions.push_back(context.device_debug_layers_extensions[j]);
-                }
-            }
-        }
-    }
+    for (auto i = 0; i < physical_device_count; ++i)
+        VK_CHECK(context.gpus[i].init(context, devices[i]));
 
-    return VK_SUCCESS;
-}
-
-VkResult check_physical_device_properties(VulkanContext& context)
-{
-    vkGetPhysicalDeviceProperties(context.main_gpu, &context.device_properties);
-    vkGetPhysicalDeviceMemoryProperties(context.main_gpu, &context.gpu_memory_properties);
-
-    const uint32_t max_uint32 = std::numeric_limits<uint32_t>::max();
-
-    uint32_t queue_count = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(context.main_gpu, &queue_count, nullptr);
-    VERIFY(queue_count > 0, "Invalid queues number", VK_ERROR_INITIALIZATION_FAILED);
-    context.queue_properties.resize(queue_count);
-    vkGetPhysicalDeviceQueueFamilyProperties(context.main_gpu, &queue_count, &context.queue_properties[0]);
-    // check that we have a queue supporting rendering
-    bool rendering_queue_found = false;
-    bool compute_queue_found = false;
-    context.graphics_queue_family_index = max_uint32;
-    for (uint32_t i = 0; i < queue_count; ++i)
-    {
-        const VkQueueFamilyProperties& properties = context.queue_properties[i];
-        if (properties.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-        {
-            rendering_queue_found = true;
-            context.graphics_queue_family_index = i;
-        }
-        if (properties.queueCount & VK_QUEUE_COMPUTE_BIT)
-            compute_queue_found = true;
-    }
-
-    VERIFY(rendering_queue_found, "Rendering queue hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
-
-    // and find the rendering queue's family index
-    context.present_queue = max_uint32;
-
-    std::vector<VkBool32> supports_present(queue_count);
-    for (uint32_t i = 0; i < queue_count; ++i)
-    {
-        VkResult res = vkGetPhysicalDeviceSurfaceSupportKHR(context.main_gpu, i, context.surface, &supports_present[i]);
-        VULKAN_VERIFY(res, "vkGetPhysicalDeviceFurfaceSupportKHR failed");
-        context.present_queue = i;
-        if (supports_present[i] == VK_TRUE && context.queue_properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-        {
-            context.graphics_queue_family_index = i;
-            break;
-        }
-    }
-
-    VERIFY(context.graphics_queue_family_index != max_uint32 && context.present_queue != max_uint32,
-        "Invalid queues", VK_ERROR_INITIALIZATION_FAILED);
+    context.main_gpu = &context.gpus[0];
 
     return VK_SUCCESS;
 }
@@ -1114,52 +1035,11 @@ VkResult init_surface(VulkanContext& context)
 
 VkResult init_device(VulkanContext& context)
 {
-    uint32_t device_extension_count = 0;
-    bool swapchain_extension_found = false;
-    VkResult res = vkEnumerateDeviceExtensionProperties(context.main_gpu, nullptr, &device_extension_count, nullptr);
-    VULKAN_VERIFY(res, "vkEnumerateDeviceExtensionProperties failed");
-    std::vector<VkExtensionProperties> device_extensions;
-    uint32_t device_enabled_extensions_count = 0;
-    if (device_extension_count > 0)
+    context.devices.resize(context.gpus.size());
+    for (size_t i = 0, size = context.gpus.size(); i < size; ++i)
     {
-        device_extensions.resize(device_extension_count);
-        context.device_enabled_extensions.resize(device_extension_count);
-        res = vkEnumerateDeviceExtensionProperties(context.main_gpu, nullptr, &device_extension_count, &device_extensions[0]);
-        VULKAN_VERIFY(res, "vkEnumerateDeviceExtensionProperties failed");
-        // we need the swapchain extensions
-        for (uint32_t i = 0; i < device_extension_count; ++i)
-        {
-            const VkExtensionProperties& property = device_extensions[i];
-            if (!strcmp(property.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
-            {
-                swapchain_extension_found = true;
-                context.device_enabled_extensions[device_enabled_extensions_count++] = property.extensionName;
-            }
-        }
+        VK_CHECK(context.devices[i].init(context, &context.gpus[i]));
     }
-
-    VERIFY(swapchain_extension_found, "Swapchain extension hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
-
-    const float queue_priority = 0.0f;
-    VkDeviceQueueCreateInfo device_queue_create_info;
-    init_defaults(device_queue_create_info);
-    device_queue_create_info.pQueuePriorities = &queue_priority;
-    device_queue_create_info.queueCount = 1;
-    device_queue_create_info.queueFamilyIndex = context.graphics_queue_family_index;
-
-    VkDeviceCreateInfo device_create_info;
-    init_defaults(device_create_info);
-    device_create_info.enabledExtensionCount = device_enabled_extensions_count;
-    device_create_info.ppEnabledExtensionNames = &context.device_enabled_extensions[0];
-    device_create_info.pQueueCreateInfos = &device_queue_create_info;
-    device_create_info.queueCreateInfoCount = 1;
-    device_create_info.ppEnabledLayerNames = context.enabled_device_debug_layers_extensions.empty() ? nullptr :
-        &context.enabled_device_debug_layers_extensions[0];
-    device_create_info.enabledLayerCount = static_cast<uint32_t>(context.enabled_device_debug_layers_extensions.size());
-    res = vkCreateDevice(context.main_gpu, &device_create_info, context.allocation_callbacks, &context.device);
-    VULKAN_VERIFY(res, "vkCreateDevice failed");
-
-    vkGetDeviceQueue(context.device, context.graphics_queue_family_index, 0, &context.graphics_queue);
 
     return VK_SUCCESS;
 }
@@ -1317,13 +1197,11 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
 
     // check validation layers
     uint32_t instance_layer_count = 0;
-    VkResult res = vkEnumerateInstanceLayerProperties(&instance_layer_count, nullptr);
-    VULKAN_VERIFY(res, "vkEnumerateInstanceLayerProperties failed");
+    VK_CHECK(vkEnumerateInstanceLayerProperties(&instance_layer_count, nullptr));
     if (instance_layer_count > 0)
     {
         context.instance_layer_properties.resize(instance_layer_count);
-        res = vkEnumerateInstanceLayerProperties(&instance_layer_count, &context.instance_layer_properties[0]);
-        VULKAN_VERIFY(res, "vkEnumerateInstanceLayerProperties failed");
+        VK_CHECK(vkEnumerateInstanceLayerProperties(&instance_layer_count, &context.instance_layer_properties[0]));
         context.enabled_instance_debug_layers_extensions.reserve(instance_layer_count);
         for (uint32_t i = 0; i < instance_layer_count; ++i)
         {
@@ -1338,8 +1216,7 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     }
 
     // create VK instance
-    res = create_instance(context, appname);
-    VULKAN_VERIFY(res, "create_instance failed");
+    VK_CHECK(create_instance(context, appname));
 
     /*if (enable_default_debug_layers)
     {
@@ -1347,8 +1224,7 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
             context.extension_functions.vkDestroyDebugReportCallbackEXT != nullptr,
             "Invalid driver", VK_ERROR_INITIALIZATION_FAILED);
 
-        VkDebugReportCallbackCreateInfoEXT dbg_create_info;
-        dbg_create_info.flags = VK_DEBUG_REPORT_DEBUG_BIT_EXT | VK_DEBUG_REPORT_INFORMATION_BIT_EXT | 
+        VkDebugReportCallbackCreateInfoEXT dbg_create_info;dbg_create_info.flags = VK_DEBUG_REPORT_DEBUG_BIT_EXT | VK_DEBUG_REPORT_INFORMATION_BIT_EXT | 
             VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
         dbg_create_info.pfnCallback = debug_callback;
         dbg_create_info.pNext = nullptr;
@@ -1359,19 +1235,23 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     }*/
 
     // GPUs
-    res = init_physical_device(context);
-    VULKAN_VERIFY(res, "init_physical_device failed");
+    VK_CHECK(init_physical_device(context));
+
+    VK_CHECK(init_window(context, appname));
+    VK_CHECK(init_surface(context));
+    VK_CHECK(init_device(context));
+    /*VULKAN_VERIFY(res, "init_physical_device failed");
 
     res = check_physical_device_properties(context);
     VULKAN_VERIFY(res, "check_physical_device_properties failed");
 
-    res = init_window(context, appname);
+    res = 
     VULKAN_VERIFY(res, "init_window failed");
 
-    res = init_surface(context);
+    res = 
     VULKAN_VERIFY(res, "init_surface failed");
 
-    res = init_device(context);
+    res = 
     VULKAN_VERIFY(res, "init_device failed");
 
     res = init_swapchain(context);
@@ -1406,14 +1286,14 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     VkPipelineCacheCreateInfo pipeline_cache_create_info;
     init_defaults(pipeline_cache_create_info);
     res = vkCreatePipelineCache(context.device, &pipeline_cache_create_info, context.allocation_callbacks, &context.pipeline_cache);
-    VULKAN_VERIFY(res, "vkCreatePipelineCache failed");
+    VULKAN_VERIFY(res, "vkCreatePipelineCache failed");*/
 
     return VK_SUCCESS;
 }
 
 void destroy_vulkan_context(VulkanContext& context)
 {
-    vkDestroyPipelineCache(context.device, context.pipeline_cache, context.allocation_callbacks);
+    /*vkDestroyPipelineCache(context.device, context.pipeline_cache, context.allocation_callbacks);
 
     vkDestroySemaphore(context.device, context.present_semaphore, context.allocation_callbacks);
 
@@ -1431,7 +1311,12 @@ void destroy_vulkan_context(VulkanContext& context)
 
     vkDestroyDevice(context.device, context.allocation_callbacks);
 
-    vkDestroySurfaceKHR(context.instance, context.surface, context.allocation_callbacks);
+    vkDestroySurfaceKHR(context.instance, context.surface, context.allocation_callbacks);*/
+    for (PhysicalDevice& physical_device : context.gpus)
+        physical_device.destroy(context);
+
+    for (Device& device : context.devices)
+        device.destroy(context);
 
     if (context.extension_functions.vkDestroyDebugReportCallbackEXT != nullptr)
         context.extension_functions.vkDestroyDebugReportCallbackEXT(context.instance, context.debug_report_callback, context.allocation_callbacks);
@@ -1444,6 +1329,128 @@ bool app_message_loop(VulkanContext& context)
 #ifdef _WIN32
     return wndprocess(context.platform_data.hwnd);
 #endif
+}
+
+
+VkResult PhysicalDevice::init(VulkanContext& context, VkPhysicalDevice id)
+{
+    // we're going to check layers and extension available for the GPU
+    uint32_t device_layer_count = 0;
+    VK_VERIFY(vkEnumerateDeviceLayerProperties(id_, &device_layer_count, nullptr));
+    if (device_layer_count > 0)
+    {
+        std::vector<VkLayerProperties> properties(device_layer_count);
+        VK_CHECK(vkEnumerateDeviceLayerProperties(id_, &device_layer_count, &properties[0]));
+        enabled_device_debug_layers_extensions.reserve(device_layer_count);
+        for (uint32_t i = 0; i < device_layer_count; ++i)
+        {
+            for (size_t j = 0, size = enabled_device_debug_layers_extensions.size(); j < size; ++j)
+            {
+                if (!strcmp(properties[i].layerName, context.device_debug_layers_extensions[j]))
+                {
+                    enabled_device_debug_layers_extensions.push_back(context.device_debug_layers_extensions[j]);
+                }
+            }
+        }
+    }
+
+    return check_properties();
+}
+
+VkResult PhysicalDevice::check_properties()
+{
+    vkGetPhysicalDeviceProperties(id_, &properties_);
+    vkGetPhysicalDeviceMemoryProperties(id_, &memory_properties_);
+
+    const uint32_t max_uint32 = std::numeric_limits<uint32_t>::max();
+
+    uint32_t queue_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(id_, &queue_count, nullptr);
+    VERIFY(queue_count > 0, "Invalid queues number", VK_ERROR_INITIALIZATION_FAILED);
+    queue_properties_.resize(queue_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(id_, &queue_count, &queue_properties_[0]);
+    // check that we have a queue supporting rendering
+    bool rendering_queue_found = false;
+    bool compute_queue_found = false;
+    for (uint32_t i = 0; i < queue_count; ++i)
+    {
+        const VkQueueFamilyProperties& properties = queue_properties_[i];
+        if (properties.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        {
+            rendering_queue_found = true;
+            graphics_queue_family_index_ = i;
+        }
+        if (properties.queueCount & VK_QUEUE_COMPUTE_BIT)
+            compute_queue_found = true;
+    }
+
+    VERIFY(rendering_queue_found, "Rendering queue hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
+
+    // and find the rendering queue's family index
+    std::vector<VkBool32> supports_present(queue_count);
+    for (uint32_t i = 0; i < queue_count; ++i)
+    {
+        VK_CHECK(vkGetPhysicalDeviceSurfaceSupportKHR(id_, i, surface_, &supports_present[i]));
+        present_queue_family_index_ = i;
+        if (supports_present[i] == VK_TRUE && queue_properties_[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        {
+            graphics_queue_family_index_ = i;
+            break;
+        }
+    }
+
+    VERIFY(graphics_queue_family_index_ != invalid_index && present_queue_family_index_ != invalid_index,
+        "Invalid queues", VK_ERROR_INITIALIZATION_FAILED);
+
+    return VK_SUCCESS;
+}
+
+void PhysicalDevice::destroy(VulkanContext&)
+{}
+
+VkResult Device::init(VulkanContext& context, PhysicalDevice* physical_device)
+{
+    ASSERT(physical_device != nullptr, "Invalid physical device");
+
+    physical_device_ = physical_device;
+
+    uint32_t device_extension_count = 0;
+    bool swapchain_extension_found = false;
+    VK_CHECK(vkEnumerateDeviceExtensionProperties(physical_device->id(), nullptr, &device_extension_count, nullptr));
+    std::vector<VkExtensionProperties> device_extensions;
+    uint32_t device_enabled_extensions_count = 0;
+    if (device_extension_count > 0)
+    {
+        device_extensions.resize(device_extension_count);
+        device_enabled_extensions_.resize(device_extension_count);
+        VK_CHECK(vkEnumerateDeviceExtensionProperties(physical_device->id(), nullptr, &device_extension_count, &device_extensions[0]));
+        // we need the swapchain extensions
+        for (uint32_t i = 0; i < device_extension_count; ++i)
+        {
+            const VkExtensionProperties& property = device_extensions[i];
+            if (!strcmp(property.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+            {
+                swapchain_extension_found = true;
+                device_enabled_extensions_[device_enabled_extensions_count++] = property.extensionName;
+            }
+        }
+    }
+
+    VERIFY(swapchain_extension_found, "Swapchain extension hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
+
+    const float queue_priority = 0.0f;
+    DeviceQueueCreateInfo queue_create_info(physical_device->graphics_queue_family_index(), 1, &queue_priority);
+    DeviceCreateInfo device_create_info(1, &queue_create_info,
+        0, nullptr,
+        device_enabled_extensions_count, &device_enabled_extensions_[0],
+        nullptr);
+    VK_VERIFY(vkCreateDevice(physical_device->id(), device_create_info.c_struct(), context.allocation_callbacks, &id_));
+    vkGetDeviceQueue(id_, physical_device->graphics_queue_family_index(), 0, &graphics_queue_);
+}
+
+void Device::destroy(VulkanContext& context)
+{
+    vkDestroyDevice(id_, context.allocation_callbacks);
 }
 
 VkResult UniformBuffer::init(VulkanContext& context, const uint8_t* data, uint32_t size)
@@ -1494,4 +1501,4 @@ void Texture::destroy(VulkanContext& context)
     destroy_image_view(imageview_, context);
 }
 
-}
+}}
