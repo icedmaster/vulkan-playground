@@ -7,17 +7,17 @@ layout (location = 1) in vec3 nrm;
 layout (location = 2) in vec3 tng;
 layout (location = 3) in vec2 tex;
 
-layout (binding = 0) uniform PerCamera
+layout (set = 0, binding = 0) uniform PerCamera
 {
     mat4 vp;
 };
 
-layout (binding = 1) uniform PerModel
+layout (set = 1, binding = 0) uniform PerModel
 {
     mat4 world;
 };
 
-layout (binding = 3) uniform Light
+layout (set = 3, binding = 0) uniform Light
 {
     vec4 diffuse;
     vec4 position;

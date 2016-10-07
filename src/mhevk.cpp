@@ -3,6 +3,19 @@
 namespace mhe {
 namespace vk {
 
+VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkFlags msgFlags, VkDebugReportObjectTypeEXT objType,
+    uint64_t srcObject, size_t location, int32_t msgCode,
+    const char *pLayerPrefix, const char *pMsg, void *pUserData)
+{
+    char buff[256];
+    sprintf(buff, "%s %s\n", pLayerPrefix, pMsg);
+    printf(buff);
+#ifdef _MSC_VER
+    OutputDebugString(buff);
+#endif
+    return VK_TRUE;
+}
+
 #ifdef _WIN32
 LRESULT CALLBACK wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
@@ -79,7 +92,7 @@ bool wndprocess(HWND hwnd)
 namespace
 {
 
-VkResult create_instance(VulkanContext& context, const char* appname)
+VkResult create_instance(VulkanContext& context, const char* appname, bool enable_validation)
 {
     // check extensions
 #ifdef _WIN32
@@ -110,6 +123,8 @@ VkResult create_instance(VulkanContext& context, const char* appname)
                 platform_surface_extension_found = true;
                 context.enabled_extensions[enabled_extensions_count++] = property.extensionName;
             }
+            else if (enable_validation && !strcmp(property.extensionName, VK_EXT_DEBUG_REPORT_EXTENSION_NAME))
+                context.enabled_extensions[enabled_extensions_count++] = property.extensionName;
         }
     }
 
@@ -207,7 +222,7 @@ VkResult init_descriptor_pools(VulkanContext& context)
 
     VkDescriptorPoolCreateInfo descriptor_pool_create_info = {};
     descriptor_pool_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    descriptor_pool_create_info.maxSets = 16;
+    descriptor_pool_create_info.maxSets = 8;
     descriptor_pool_create_info.poolSizeCount = 2;
     descriptor_pool_create_info.pPoolSizes = descriptor_pool_size;
     VK_CHECK(vkCreateDescriptorPool(*context.main_device, &descriptor_pool_create_info, context.allocation_callbacks, &context.descriptor_pools.main_descriptor_pool));
@@ -219,7 +234,7 @@ VkResult init_descriptor_set_layouts(VulkanContext& context)
 {
     VkDescriptorSetLayoutBinding per_model_layout_binding[1] =
     {
-        { 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr }
+        { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr }
     };
 
     VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create_info = {};
@@ -228,11 +243,22 @@ VkResult init_descriptor_set_layouts(VulkanContext& context)
     descriptor_set_layout_create_info.bindingCount = array_size(per_model_layout_binding);
     VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &context.descriptor_set_layouts.mesh_layout));
 
+    VkDescriptorSetLayoutBinding material_layout_binding[2] =
+    {
+        { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr },
+        { 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }
+    };
+
+    descriptor_set_layout_create_info.pBindings = material_layout_binding;
+    descriptor_set_layout_create_info.bindingCount = array_size(material_layout_binding);
+    VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &context.descriptor_set_layouts.material_layout));
+
     return VK_SUCCESS;
 }
 
 void destroy_descriptor_set_layouts(VulkanContext& context)
 {
+    vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.material_layout, context.allocation_callbacks);
     vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.mesh_layout, context.allocation_callbacks);
 }
 }
@@ -254,7 +280,8 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
             "VK_LAYER_LUNARG_object_tracker", "VK_LAYER_LUNARG_draw_state",
             "VK_LAYER_LUNARG_param_checker",  "VK_LAYER_LUNARG_swapchain",
             "VK_LAYER_LUNARG_device_limits",  "VK_LAYER_LUNARG_image",
-            "VK_LAYER_GOOGLE_unique_objects",
+            "VK_LAYER_GOOGLE_unique_objects", "VK_LAYER_LUNARG_standard_validation",
+            "VK_LAYER_LUNARG_core_validation"
         };
         context.instance_debug_layers_extensions.resize(ARRAY_SIZE(debug_layer_extensions));
         for (size_t i = 0, size = context.instance_debug_layers_extensions.size(); i < size; ++i)
@@ -283,23 +310,22 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     }
 
     // create VK instance
-    VK_CHECK(create_instance(context, appname));
+    VK_CHECK(create_instance(context, appname, enable_default_debug_layers));
 
-    /*if (enable_default_debug_layers)
+    if (enable_default_debug_layers)
     {
-    VERIFY(context.extension_functions.vkCreateDebugReportCallbackEXT != nullptr &&
-    context.extension_functions.vkDestroyDebugReportCallbackEXT != nullptr,
-    "Invalid driver", VK_ERROR_INITIALIZATION_FAILED);
+        VERIFY(context.extension_functions.vkCreateDebugReportCallbackEXT != nullptr &&
+            context.extension_functions.vkDestroyDebugReportCallbackEXT != nullptr,
+            "Invalid driver", VK_ERROR_INITIALIZATION_FAILED);
 
-    VkDebugReportCallbackCreateInfoEXT dbg_create_info;dbg_create_info.flags = VK_DEBUG_REPORT_DEBUG_BIT_EXT | VK_DEBUG_REPORT_INFORMATION_BIT_EXT |
-    VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
-    dbg_create_info.pfnCallback = debug_callback;
-    dbg_create_info.pNext = nullptr;
-    dbg_create_info.pUserData = nullptr;
-    dbg_create_info.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT;
-    res = context.extension_functions.vkCreateDebugReportCallbackEXT(context.instance, &dbg_create_info, context.allocation_callbacks, &context.debug_report_callback);
-    VULKAN_VERIFY(res, "vkCreateDebugReportCallbackEXT failed");
-    }*/
+        VkDebugReportCallbackCreateInfoEXT dbg_create_info;dbg_create_info.flags = VK_DEBUG_REPORT_DEBUG_BIT_EXT | VK_DEBUG_REPORT_INFORMATION_BIT_EXT |
+        VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
+        dbg_create_info.pfnCallback = debug_callback;
+        dbg_create_info.pNext = nullptr;
+        dbg_create_info.pUserData = nullptr;
+        dbg_create_info.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT;
+        VK_CHECK(context.extension_functions.vkCreateDebugReportCallbackEXT(context.instance, &dbg_create_info, context.allocation_callbacks, &context.debug_report_callback));
+    }
 
     VK_CHECK(init_window(context, appname));
     VK_CHECK(init_surface(context));
@@ -403,14 +429,14 @@ VkResult PhysicalDevice::init(VulkanContext& context, VkPhysicalDevice id)
     {
         std::vector<VkLayerProperties> properties(device_layer_count);
         VK_CHECK(vkEnumerateDeviceLayerProperties(id_, &device_layer_count, &properties[0]));
-        enabled_device_debug_layers_extensions.reserve(device_layer_count);
+        enabled_device_debug_layers_extensions_.reserve(device_layer_count);
         for (uint32_t i = 0; i < device_layer_count; ++i)
         {
-            for (size_t j = 0, size = enabled_device_debug_layers_extensions.size(); j < size; ++j)
+            for (size_t j = 0, size = context.device_debug_layers_extensions.size(); j < size; ++j)
             {
                 if (!strcmp(properties[i].layerName, context.device_debug_layers_extensions[j]))
                 {
-                    enabled_device_debug_layers_extensions.push_back(context.device_debug_layers_extensions[j]);
+                    enabled_device_debug_layers_extensions_.push_back(context.device_debug_layers_extensions[j]);
                 }
             }
         }
@@ -469,6 +495,11 @@ VkResult PhysicalDevice::check_properties(VulkanContext& context)
     VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(id_, context.surface, &present_modes_count, nullptr));
     present_modes_.resize(present_modes_count);
     VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(id_, context.surface, &present_modes_count, &present_modes_[0]));
+    // get possible swapchain formats
+    uint32_t surface_formats_count = 0;
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(id_, context.surface, &surface_formats_count, nullptr));
+    surface_formats_.resize(surface_formats_count);
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(id_, context.surface, &surface_formats_count, &surface_formats_[0]));
 
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(id_, context.surface, &surface_capabilities_));
 
@@ -573,6 +604,8 @@ VkResult Device::init(VulkanContext& context, PhysicalDevice* physical_device)
 
     physical_device_ = physical_device;
 
+    const bool use_validation = !context.enabled_instance_debug_layers_extensions.empty();
+
     uint32_t device_extension_count = 0;
     bool swapchain_extension_found = false;
     VK_CHECK(vkEnumerateDeviceExtensionProperties(physical_device->id(), nullptr, &device_extension_count, nullptr));
@@ -597,10 +630,14 @@ VkResult Device::init(VulkanContext& context, PhysicalDevice* physical_device)
 
     VERIFY(swapchain_extension_found, "Swapchain extension hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
 
+    const auto& device_debug_layers = physical_device->enabled_debug_layers();
+    uint32_t validation_layers_count = use_validation ? device_debug_layers.size() : 0;
+    const char* const* validation_layers = validation_layers_count > 0 ? &device_debug_layers[0] : nullptr;
+
     const float queue_priority = 0.0f;
     DeviceQueueCreateInfo queue_create_info(physical_device->graphics_queue_family_index(), 1, &queue_priority);
     DeviceCreateInfo device_create_info(1, &queue_create_info,
-        0, nullptr,
+        validation_layers_count, validation_layers,
         device_enabled_extensions_count, &device_enabled_extensions_[0],
         nullptr);
     VK_VERIFY(vkCreateDevice(physical_device->id(), device_create_info.c_struct(), context.allocation_callbacks, &id_));
@@ -650,6 +687,8 @@ VkResult Swapchain::init(VulkanContext& context, Device* device, const Settings&
     }
 
     const VkSurfaceCapabilitiesKHR& surface_capabilities = physical_device->surface_capabilities();
+
+    const auto& surface_formats = physical_device->surface_formats();
 
     // create a swapchain
     VERIFY(surface_capabilities.currentExtent.width == static_cast<uint32_t>(-1) ||
@@ -728,7 +767,7 @@ VkResult ImageView::init(VulkanContext& context, const GPUInterface& gpu_iface, 
 
     VkExtent3D extent = {settings.width, settings.height, settings.depth};
     ImageCreateInfo image_create_info(VK_IMAGE_TYPE_2D, settings.format, extent, settings.mip_levels, settings.array_layers, VK_SAMPLE_COUNT_1_BIT,
-        VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_SHARING_MODE_EXCLUSIVE);
+        settings.usage, VK_SHARING_MODE_EXCLUSIVE);
     if (data != nullptr)
         image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
@@ -753,6 +792,7 @@ VkResult ImageView::init(VulkanContext& context, const GPUInterface& gpu_iface, 
 
         image_create_info.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
         image_create_info.tiling = VK_IMAGE_TILING_LINEAR;
+        image_create_info.usage = settings.usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
         VK_CHECK(vkCreateImage(device, image_create_info.c_struct(), context.allocation_callbacks, &src_image));
         vkGetImageMemoryRequirements(device, src_image, &image_memory_requirements);
@@ -1021,6 +1061,10 @@ VkResult Texture::init(VulkanContext& context, const GPUInterface& gpu_iface,
     sampler_create_info.mipmapMode = sampler_settings.mipmap_mode;
     VK_CHECK(vkCreateSampler(*gpu_iface.device, &sampler_create_info, context.allocation_callbacks, &sampler_));
 
+    descriptor_image_info_.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    descriptor_image_info_.imageView = image_view_.image_view_id();
+    descriptor_image_info_.sampler = sampler_;
+
     return VK_SUCCESS;
 }
 
@@ -1182,9 +1226,9 @@ CommandBuffer& CommandBuffer::bind_pipeline(VkPipeline pipeline, VkPipelineBindP
 }
 
 CommandBuffer& CommandBuffer::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout pipeline_layout,
-    const VkDescriptorSet* descriptor_sets, uint32_t descriptor_sets_count)
+    const VkDescriptorSet* descriptor_sets, uint32_t descriptor_sets_count, uint32_t first)
 {
-    vkCmdBindDescriptorSets(id_, bind_point, pipeline_layout, 0, descriptor_sets_count, descriptor_sets, 0, nullptr);
+    vkCmdBindDescriptorSets(id_, bind_point, pipeline_layout, first, descriptor_sets_count, descriptor_sets, 0, nullptr);
     return *this;
 }
 
@@ -1199,7 +1243,7 @@ CommandBuffer& CommandBuffer::draw(const Mesh& mesh, size_t part_index)
 
     vkCmdBindVertexBuffers(id_, 0, 1, &vk_buffer, size);
     vkCmdBindIndexBuffer(id_, ibuffer, 0, VK_INDEX_TYPE_UINT16);
-    vkCmdDrawIndexed(id_, part.indices_count, 1, part.ibuffer_offset, part.vbuffer_offset, 1);
+    vkCmdDrawIndexed(id_, part.indices_count, 1, part.ibuffer_offset, part.vbuffer_offset, 0);
     return *this;
 }
 
@@ -1232,6 +1276,41 @@ void init_fullscreen_viewport(VkViewport& viewport, const VulkanContext& context
     viewport.height = static_cast<float>(context.height);
     viewport.x = 0;
     viewport.y = 0;
+}
+
+VkResult Material::init(vk::VulkanContext& context, const vk::GPUInterface& gpu_iface)
+{
+    gpu_iface_ = gpu_iface;
+
+    VkDescriptorSetAllocateInfo allocate_info = {};
+    allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocate_info.pSetLayouts = &context.descriptor_set_layouts.material_layout;
+    allocate_info.descriptorSetCount = 1;
+    allocate_info.descriptorPool = context.descriptor_pools.main_descriptor_pool;
+    VK_CHECK(vkAllocateDescriptorSets(*gpu_iface.device, &allocate_info, &descriptor_set_));
+
+    return VK_SUCCESS;
+}
+
+void Material::destroy(VulkanContext& context)
+{
+    vkFreeDescriptorSets(*gpu_iface_.device, context.descriptor_pools.main_descriptor_pool, 1, &descriptor_set_);
+}
+
+void Material::build_descriptor_set()
+{
+    VkDescriptorImageInfo infos[max_texture_index];
+    for (size_t i = 0; i < max_texture_index; ++i)
+        infos[i] = textures_[i]->descriptor_image_info();
+
+    VkWriteDescriptorSet write_descriptor_set = {};
+    write_descriptor_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write_descriptor_set.descriptorCount = max_texture_index;
+    write_descriptor_set.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write_descriptor_set.dstBinding = 1;
+    write_descriptor_set.dstSet = descriptor_set_;
+    write_descriptor_set.pImageInfo = infos;
+    vkUpdateDescriptorSets(*gpu_iface_.device, 1, &write_descriptor_set, 0, nullptr);
 }
 
 VkResult Mesh::create_cube(vk::VulkanContext& context, const vk::GPUInterface& gpu_iface)
@@ -1295,11 +1374,25 @@ VkResult Mesh::create_cube(vk::VulkanContext& context, const vk::GPUInterface& g
     allocate_info.descriptorPool = context.descriptor_pools.main_descriptor_pool;
     VK_CHECK(vkAllocateDescriptorSets(*context.main_device, &allocate_info, &descriptor_set_));
 
+    buffer_settings.memory_properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    buffer_settings.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    VK_CHECK(uniform_.init(context, gpu_iface, buffer_settings, reinterpret_cast<const uint8_t*>(&mat4x4::identity()), sizeof(mat4x4)));
+
+    VkWriteDescriptorSet write_descriptor_set = {};
+    write_descriptor_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write_descriptor_set.descriptorCount = 1;
+    write_descriptor_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write_descriptor_set.dstBinding = 0;
+    write_descriptor_set.dstSet = descriptor_set_;
+    write_descriptor_set.pBufferInfo = &uniform_.descriptor_buffer_info();
+    vkUpdateDescriptorSets(*gpu_iface.device, 1, &write_descriptor_set, 0, nullptr);
+
     return VK_SUCCESS;
 }
 
 void Mesh::destroy(vk::VulkanContext& context)
 {
+    uniform_.destroy(context);
     VK_CHECK(vkFreeDescriptorSets(*context.main_device, context.descriptor_pools.main_descriptor_pool, 1, &descriptor_set_));
     ibuffer_.destroy(context);
     vbuffer_.destroy(context);

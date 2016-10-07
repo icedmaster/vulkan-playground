@@ -518,15 +518,9 @@ public:
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr}
         };
 
-        VkDescriptorSetLayoutBinding material_layout_binding[2] =
-        {
-            {2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}
-        };
-
         VkDescriptorSetLayoutBinding per_light_layout_binding[1] =
         {
-            { 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }
+            { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }
         };
 
         VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create_info = {};
@@ -535,10 +529,6 @@ public:
         descriptor_set_layout_create_info.bindingCount = array_size(per_camera_layout_binding);
         VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &per_camera_descriptor_set_layout_));
 
-        descriptor_set_layout_create_info.pBindings = material_layout_binding;
-        descriptor_set_layout_create_info.bindingCount = array_size(material_layout_binding);
-        VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &material_descriptor_set_layout_));
-
         descriptor_set_layout_create_info.pBindings = per_light_layout_binding;
         descriptor_set_layout_create_info.bindingCount = array_size(per_light_layout_binding);
         VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &per_light_descriptor_set_layout_));
@@ -546,7 +536,7 @@ public:
         VkDescriptorSetLayout descriptor_set_layouts[4] =
         {
             per_camera_descriptor_set_layout_, context.descriptor_set_layouts.mesh_layout,
-            material_descriptor_set_layout_, per_light_descriptor_set_layout_
+            context.descriptor_set_layouts.material_layout, per_light_descriptor_set_layout_
         };
 
         VkPipelineLayoutCreateInfo layout_create_info = {};
@@ -611,7 +601,6 @@ public:
         vkFreeDescriptorSets(*context.main_device, context.descriptor_pools.main_descriptor_pool, 1, &light_descriptor_set_);
 
         vkDestroyDescriptorSetLayout(*context.main_device, per_camera_descriptor_set_layout_, context.allocation_callbacks);
-        vkDestroyDescriptorSetLayout(*context.main_device, material_descriptor_set_layout_, context.allocation_callbacks);
         vkDestroyDescriptorSetLayout(*context.main_device, per_light_descriptor_set_layout_, context.allocation_callbacks);
 
         per_camera_uniform_.destroy(context);
@@ -628,20 +617,23 @@ public:
 
     void render(vk::CommandBuffer& command_buffer, vk::VulkanContext& context, const Scene& scene)
     {
-        VkDescriptorSet descriptor_sets[2] =
-        {
-            camera_descriptor_set_, light_descriptor_set_
-        };
-        command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, descriptor_sets, array_size(descriptor_sets));
+        command_buffer.bind_pipeline(pipeline_, VK_PIPELINE_BIND_POINT_GRAPHICS);
+        command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &camera_descriptor_set_, 1, 0);
+        command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &light_descriptor_set_, 1, 3);
         for (const vk::Mesh& mesh : scene.meshes)
         {
             VkDescriptorSet mesh_descriptor_sets[1] =
             {
                 mesh.descriptor_set()
             };
-            command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, mesh_descriptor_sets, array_size(mesh_descriptor_sets));
+            command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, mesh_descriptor_sets, array_size(mesh_descriptor_sets), 1);
             for (size_t i = 0, size = mesh.parts().size(); i < size; ++i)
             {
+                VkDescriptorSet part_descriptor_sets[1] =
+                {
+                    mesh.parts()[i].material->descriptor_set()
+                };
+                command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, part_descriptor_sets, array_size(part_descriptor_sets), 2);
                 command_buffer.draw(mesh, i);
             }
         }
@@ -649,10 +641,6 @@ public:
 private:
     VkResult create_uniforms(vk::VulkanContext& context)
     {
-        // uniforms
-        PerModelUniformData per_model_uniform_data;
-        per_model_uniform_data.world = mat4x4::scaling(4.0f);
-        
         uint32_t graphics_queue_family_index = context.main_device->physical_device()->graphics_queue_family_index();
 
         vk::GPUInterface gpu_iface;
@@ -724,7 +712,6 @@ private:
     VkPipeline pipeline_;
     VkPipelineLayout pipeline_layout_;
     VkDescriptorSetLayout per_camera_descriptor_set_layout_;
-    VkDescriptorSetLayout material_descriptor_set_layout_;
     VkDescriptorSetLayout per_light_descriptor_set_layout_;
 
     VkDescriptorSet camera_descriptor_set_;
@@ -752,7 +739,7 @@ void destroy_renderers(Renderers& renderers, vk::VulkanContext& context)
 int main(int argc, char** argv)
 {
     vk::VulkanContext context;
-    VkResult res = vk::init_vulkan_context(context, "vk_cube", 512, 512, false);
+    VkResult res = vk::init_vulkan_context(context, "vk_cube", 512, 512, true);
     VERIFY(res == VK_SUCCESS, "init_vulkan_context failed", -1);
 
     Renderers renderers;
@@ -778,6 +765,11 @@ int main(int argc, char** argv)
     VK_CHECK(texture.init(context, context.default_gpu_interface, image_settings, vk::Texture::SamplerSettings(),
         &image_data.data[0], image_data.data.size()));
 
+    vk::Material material;
+    VK_CHECK(material.init(context, context.default_gpu_interface));
+    material.set_albedo(&texture);
+    scene.meshes[0].set_material(0, &material);
+
     vk::CommandBuffer command_buffer;
     context.command_pools.main_graphics_command_pool.create_command_buffers(context, &command_buffer, 1);
     command_buffer
@@ -800,6 +792,8 @@ int main(int argc, char** argv)
         graphics_queue.wait_idle();
     }
 
+    mesh.destroy(context);
+    material.destroy(context);
     texture.destroy(context);
 
     destroy_renderers(renderers, context);

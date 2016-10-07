@@ -405,7 +405,7 @@ struct ApplicationInfo
     ApplicationInfo(const char* applicationName, uint32_t version, const char* engineName, uint32_t engineVersion) :
         sType(VK_STRUCTURE_TYPE_APPLICATION_INFO),
         pNext(nullptr),
-        apiVersion(VK_API_VERSION),
+        apiVersion(VK_API_VERSION_1_0),
         pApplicationName(applicationName), applicationVersion(version),
         pEngineName(engineName), engineVersion(engineVersion)
     {}
@@ -542,7 +542,7 @@ struct ImageCreateInfo
         tiling(VK_IMAGE_TILING_OPTIMAL),
         usage(usage), sharingMode(sharingMode),
         queueFamilyIndexCount(0), pQueueFamilyIndices(nullptr),
-        initialLayout(VK_IMAGE_LAYOUT_GENERAL)
+        initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
     {}
 
     const VkImageCreateInfo* c_struct() const
@@ -616,7 +616,17 @@ public:
         return surface_capabilities_;
     }
 
+    const std::vector<VkSurfaceFormatKHR>& surface_formats() const
+    {
+        return surface_formats_;
+    }
+
     uint32_t get_memory_type_index(const VkMemoryRequirements& memory_requirements, VkMemoryPropertyFlags flags) const;
+
+    const std::vector<const char*>& enabled_debug_layers() const
+    {
+        return enabled_device_debug_layers_extensions_;
+    }
 private:
     VkResult check_properties(VulkanContext& context);
 
@@ -624,11 +634,12 @@ private:
     VkPhysicalDeviceProperties properties_;
     VkPhysicalDeviceMemoryProperties memory_properties_;
     std::vector<VkQueueFamilyProperties> queue_properties_;
-    std::vector<const char*> enabled_device_debug_layers_extensions;
+    std::vector<const char*> enabled_device_debug_layers_extensions_;
     uint32_t graphics_queue_family_index_;
     uint32_t present_queue_family_index_;
     std::vector<VkPresentModeKHR> present_modes_;
     VkSurfaceCapabilitiesKHR surface_capabilities_;
+    std::vector<VkSurfaceFormatKHR> surface_formats_;
 };
 
 class Semaphore
@@ -779,6 +790,7 @@ public:
         VkMemoryPropertyFlags memory_properties;
 
         Settings() :
+            queue_family_indices_count(1),
             sharing_mode(VK_SHARING_MODE_EXCLUSIVE),
             memory_properties(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
         {}
@@ -814,7 +826,7 @@ public:
         VkSharingMode image_sharing_mode;
 
         Settings() :
-            format(VK_FORMAT_R8G8B8A8_UNORM),
+            format(VK_FORMAT_B8G8R8A8_UNORM),
             image_sharing_mode(VK_SHARING_MODE_EXCLUSIVE)
         {}
     };
@@ -947,9 +959,15 @@ public:
         const ImageView::Settings& image_settings, const SamplerSettings& sampler_Settings,
         const uint8_t* data, uint32_t size);
     void destroy(VulkanContext& context);
+
+    const VkDescriptorImageInfo& descriptor_image_info() const
+    {
+        return descriptor_image_info_;
+    }
 private:
     ImageView image_view_;
     VkSampler sampler_;
+    VkDescriptorImageInfo descriptor_image_info_;
 };
 
 class Command
@@ -982,7 +1000,7 @@ public:
     CommandBuffer& copy_buffer(VkBuffer src, VkBuffer dst, const VkBufferCopy* regions, uint32_t regions_count);
     CommandBuffer& bind_pipeline(VkPipeline pipeline, VkPipelineBindPoint bind_point);
     CommandBuffer& bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout pipeline_layout,
-        const VkDescriptorSet* descriptor_sets, uint32_t descriptor_sets_count);
+        const VkDescriptorSet* descriptor_sets, uint32_t descriptor_sets_count, uint32_t first);
     CommandBuffer& draw(const Mesh& mesh, size_t part_index);
 private:
     VkCommandBuffer id_;
@@ -1030,6 +1048,7 @@ struct DescriptorPools
 struct DesciptorSetLayouts
 {
     VkDescriptorSetLayout mesh_layout;
+    VkDescriptorSetLayout material_layout;
 };
 
 struct VulkanContext
@@ -1099,8 +1118,34 @@ public:
     static void vertex_input_info(VkPipelineVertexInputStateCreateInfo& info);
 };
 
-struct Material
+class Material
 {
+    enum
+    {
+        albedo_texture = 0,
+        max_texture_index
+    };
+public:
+    VkResult init(VulkanContext& context, const GPUInterface& gpu_iface);
+    void destroy(VulkanContext& context);
+
+    void set_albedo(Texture* texture)
+    {
+        textures_[albedo_texture] = texture;
+        build_descriptor_set();
+    }
+
+    VkDescriptorSet descriptor_set() const
+    {
+        return descriptor_set_;
+    }
+private:
+    void build_descriptor_set();
+
+    Texture* textures_[max_texture_index];
+    Buffer uniform_;
+    VkDescriptorSet descriptor_set_;
+    GPUInterface gpu_iface_;
 };
 
 struct MeshPart
@@ -1135,6 +1180,11 @@ public:
     VkDescriptorSet descriptor_set() const
     {
         return descriptor_set_;
+    }
+
+    void set_material(size_t index, Material* material)
+    {
+        parts_[index].material = material;
     }
 private:
     std::vector<MeshPart> parts_;
