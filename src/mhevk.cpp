@@ -353,7 +353,7 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
 
     // default render passes
     RenderPass::Settings::AttachmentDesc attachment_descs[2];
-    attachment_descs[0].format = VK_FORMAT_R8G8B8A8_UNORM;
+    attachment_descs[0].format = VK_FORMAT_B8G8R8A8_UNORM;
     attachment_descs[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     attachment_descs[1].format = VK_FORMAT_D24_UNORM_S8_UINT;
     attachment_descs[1].layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -362,14 +362,7 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     render_pass_settings.count = 2;
     VK_CHECK(context.render_passes.main_render_pass.init(context, gpu_iface, render_pass_settings));
 
-    Framebuffer::Settings framebuffer_settings;
-    const ImageView* image_views[2] = {&context.main_swapchain.color_images()[0], &context.main_depth_stencil_image_view};
-    framebuffer_settings.attachments = image_views;
-    framebuffer_settings.count = 2;
-    framebuffer_settings.height = context.height;
-    framebuffer_settings.width = context.width;
-    framebuffer_settings.render_pass = &context.render_passes.main_render_pass;
-    VK_CHECK(context.framebuffers.main_framebuffer.init(context, gpu_iface, framebuffer_settings));
+    VK_CHECK(context.main_swapchain.create_framebuffers(context, &context.render_passes.main_render_pass));
 
     VK_CHECK(context.command_pools.main_graphics_command_pool.init(context, gpu_iface));
     VK_CHECK(context.command_pools.resource_uploading_command_pool.init(context, gpu_iface));
@@ -393,7 +386,6 @@ void destroy_vulkan_context(VulkanContext& context)
     context.command_pools.resource_uploading_command_pool.destroy(context);
     context.command_pools.main_graphics_command_pool.destroy(context);
 
-    context.framebuffers.main_framebuffer.destroy(context);
     context.render_passes.main_render_pass.destroy(context);
 
     context.main_depth_stencil_image_view.destroy(context);
@@ -522,57 +514,59 @@ uint32_t PhysicalDevice::get_memory_type_index(const VkMemoryRequirements& memor
     return 0;
 }
 
-VkResult Semaphore::init(VulkanContext& context, const GPUInterface& gpu_iface)
-{
-    gpu_iface_ = gpu_iface;
-
-    VkSemaphoreCreateInfo create_info = {};
-    create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    VK_CHECK(vkCreateSemaphore(*gpu_iface.device, &create_info, context.allocation_callbacks, &id_));
-
-    return VK_SUCCESS;
-}
-
-void Semaphore::destroy(VulkanContext& context)
-{
-    vkDestroySemaphore(*gpu_iface_.device, id_, context.allocation_callbacks);
-}
-
 VkResult Queue::init(VulkanContext& context, const GPUInterface& gpu_iface, VkQueue id)
 {
     id_ = id;
-    return present_semaphore_.init(context, gpu_iface);
+    gpu_iface_ = gpu_iface;
+    VkSemaphoreCreateInfo create_info = {};
+    create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    VK_CHECK(vkCreateSemaphore(*gpu_iface.device, &create_info, context.allocation_callbacks, &present_semaphore_));
+    VkFenceCreateInfo fence_create_info = {};
+    fence_create_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VK_CHECK(vkCreateFence(*gpu_iface.device, &fence_create_info, context.allocation_callbacks, &submit_fence_));
+    return VK_SUCCESS;
 }
 
 void Queue::destroy(VulkanContext& context)
 {
-    present_semaphore_.destroy(context);
+    vkDestroyFence(*gpu_iface_.device, submit_fence_, context.allocation_callbacks);
+    vkDestroySemaphore(*gpu_iface_.device, present_semaphore_, context.allocation_callbacks);
 }
 
 VkResult Queue::submit(const CommandBuffer* command_buffers, uint32_t count,
-    const Semaphore* signal_semaphores, uint32_t signal_semaphores_count)
+    const VkSemaphore* wait_semaphores, uint32_t wait_semaphores_count,
+    const VkSemaphore* signal_semaphores, uint32_t signal_semaphores_count)
 {
     std::vector<VkCommandBuffer> buffers(count);
     for (uint32_t i = 0; i < count; ++i)
         buffers[i] = command_buffers[i];
-    std::vector<VkSemaphore> semaphores(signal_semaphores_count);
-    for (uint32_t i = 0; i < signal_semaphores_count; ++i)
-        semaphores[i] = signal_semaphores[i];
+
+    VkPipelineStageFlags wait_stages = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 
     VkSubmitInfo submit_info = {};
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit_info.commandBufferCount = count;
     submit_info.pCommandBuffers = &buffers[0];
-    submit_info.pSignalSemaphores = semaphores.empty() ? nullptr : &semaphores[0];
+    submit_info.pSignalSemaphores = signal_semaphores;
     submit_info.signalSemaphoreCount = signal_semaphores_count;
+    submit_info.pWaitSemaphores = wait_semaphores;
+    submit_info.waitSemaphoreCount = wait_semaphores_count;
+    submit_info.pWaitDstStageMask = &wait_stages;
 
-    VK_CHECK(vkQueueSubmit(id_, 1, &submit_info, 0));
+    VK_CHECK(vkQueueSubmit(id_, 1, &submit_info, submit_fence_));
 
     return VK_SUCCESS;
 }
 
 VkResult Queue::present(const Swapchain* swapchain)
 {
+    VkResult res = VK_TIMEOUT;
+    do
+    {
+        res = vkWaitForFences(*gpu_iface_.device, 1, &submit_fence_, VK_TRUE, std::numeric_limits<uint64_t>::max());
+    }
+    while (res == VK_TIMEOUT);
+
     VkSwapchainKHR tmp_swapchain = *swapchain;
 
     uint32_t current_buffer = swapchain->current_buffer();
@@ -718,11 +712,18 @@ VkResult Swapchain::init(VulkanContext& context, Device* device, const Settings&
     swapchain_create_info.surface = context.surface;
     VK_CHECK(vkCreateSwapchainKHR(device_->id(), &swapchain_create_info, context.allocation_callbacks, &id_));
 
+    VkSemaphoreCreateInfo semaphore_create_info = {};
+    semaphore_create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    VK_CHECK(vkCreateSemaphore(*device, &semaphore_create_info, context.allocation_callbacks, &next_image_semaphore_));
+
     return init_images(context);
 }
 
 void Swapchain::destroy(VulkanContext& context)
 {
+    for (auto& fb : framebuffers_)
+        fb.destroy(context);
+    vkDestroySemaphore(*device_, next_image_semaphore_, context.allocation_callbacks);
     for (auto& imageview : color_images_)
         imageview.destroy(context);
     vkDestroySwapchainKHR(device_->id(), id_, context.allocation_callbacks);
@@ -744,7 +745,7 @@ VkResult Swapchain::init_images(VulkanContext& context)
     {
         ImageView::Settings settings;
         settings.aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT;
-        settings.format = VK_FORMAT_R8G8B8A8_UNORM;
+        settings.format = settings_.format;
 
         VK_CHECK(color_images_[i].init(context, gpu_iface, settings, images[i], nullptr, 0));
     }
@@ -754,7 +755,29 @@ VkResult Swapchain::init_images(VulkanContext& context)
 
 VkResult Swapchain::acquire_next_image()
 {
-    VK_CHECK(vkAcquireNextImageKHR(*device_, id_, std::numeric_limits<uint64_t>::max(), VK_NULL_HANDLE, VK_NULL_HANDLE, &current_buffer_));
+    VK_CHECK(vkAcquireNextImageKHR(*device_, id_, std::numeric_limits<uint64_t>::max(), next_image_semaphore_, VK_NULL_HANDLE, &current_buffer_));
+    return VK_SUCCESS;
+}
+
+VkResult Swapchain::create_framebuffers(VulkanContext& context, RenderPass* render_pass)
+{
+    framebuffers_.resize(color_images_.size());
+
+    GPUInterface gpu_iface;
+    gpu_iface.device = device_;
+
+    Framebuffer::Settings framebuffer_settings;
+    for (size_t i = 0, size = color_images_.size(); i < size; ++i)
+    {
+        const ImageView* image_views[2] = { &color_images_[i], &context.main_depth_stencil_image_view };
+        framebuffer_settings.attachments = image_views;
+        framebuffer_settings.count = 2;
+        framebuffer_settings.height = context.height;
+        framebuffer_settings.width = context.width;
+        framebuffer_settings.render_pass = render_pass;
+        VK_CHECK(framebuffers_[i].init(context, gpu_iface, framebuffer_settings));
+    }
+
     return VK_SUCCESS;
 }
 
@@ -904,6 +927,15 @@ void Buffer::destroy(VulkanContext& context)
 
 VkResult Buffer::update(VulkanContext& context, const uint8_t* data, uint32_t size)
 {
+    if (settings_.memory_properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+    {
+        void* mapped_memory = nullptr;
+        VK_CHECK(vkMapMemory(*gpu_iface_.device, memory_, 0, size, 0, &mapped_memory));
+        memcpy(mapped_memory, data, size);
+        vkUnmapMemory(*gpu_iface_.device, memory_);
+        return VK_SUCCESS;
+    }
+
     VkBufferCreateInfo create_info = {};
     create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     create_info.pQueueFamilyIndices = settings_.queue_family_indices;
@@ -961,7 +993,10 @@ VkResult RenderPass::init(VulkanContext& context, const GPUInterface& gpu_iface,
     VkAttachmentDescription attachment_descriptions[max_attachments];
     for (uint32_t i = 0; i < settings.count; ++i)
     {
-        attachment_descriptions[i].finalLayout = settings.descs[i].layout;
+        if (settings.descs[i].layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            attachment_descriptions[i].finalLayout = settings.descs[i].layout;
+        else
+            attachment_descriptions[i].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         attachment_descriptions[i].flags = 0;
         attachment_descriptions[i].format = settings.descs[i].format;
         attachment_descriptions[i].initialLayout = settings.descs[i].layout;
@@ -1247,6 +1282,24 @@ CommandBuffer& CommandBuffer::draw(const Mesh& mesh, size_t part_index)
     return *this;
 }
 
+CommandBuffer& CommandBuffer::transfer_image_layout(VkImage image, VkImageLayout src_layout, VkImageLayout dst_layout, VkImageAspectFlags aspect_flags)
+{
+    VkImageMemoryBarrier image_memory_barrier = {};
+    image_memory_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    image_memory_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    image_memory_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    image_memory_barrier.image = image;
+    image_memory_barrier.oldLayout = src_layout;
+    image_memory_barrier.newLayout = dst_layout;
+    image_memory_barrier.subresourceRange.aspectMask = aspect_flags;
+    image_memory_barrier.subresourceRange.layerCount = 1;
+    image_memory_barrier.subresourceRange.levelCount = 1;
+    vkCmdPipelineBarrier(id_, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &image_memory_barrier);
+
+    return *this;
+}
+
 void GeometryLayout::vertex_input_info(VkPipelineVertexInputStateCreateInfo& info)
 {
     // vertex input
@@ -1258,7 +1311,7 @@ void GeometryLayout::vertex_input_info(VkPipelineVertexInputStateCreateInfo& inf
         { 3, 0, VK_FORMAT_R32G32_SFLOAT, 3 * sizeof(vec3) } // tex
     };
 
-    static const VkVertexInputBindingDescription vi_binding_desc = { 0, sizeof(vk::GeometryLayout), VK_VERTEX_INPUT_RATE_VERTEX };
+    static const VkVertexInputBindingDescription vi_binding_desc = { 0, sizeof(vk::GeometryLayout::Vertex), VK_VERTEX_INPUT_RATE_VERTEX };
 
     memset(&info, 0, sizeof(VkPipelineVertexInputStateCreateInfo));
     info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -1355,8 +1408,6 @@ VkResult Mesh::create_cube(vk::VulkanContext& context, const vk::GPUInterface& g
     vk::Buffer::Settings buffer_settings;
     buffer_settings.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     buffer_settings.memory_properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-    buffer_settings.queue_family_indices_count = 1;
-    buffer_settings.queue_family_indices = &graphics_queue_family_index;
     VK_CHECK(vbuffer_.init(context, gpu_iface, buffer_settings, reinterpret_cast<const uint8_t*>(cube_vertices), sizeof(cube_vertices)));
 
     buffer_settings.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
@@ -1374,7 +1425,7 @@ VkResult Mesh::create_cube(vk::VulkanContext& context, const vk::GPUInterface& g
     allocate_info.descriptorPool = context.descriptor_pools.main_descriptor_pool;
     VK_CHECK(vkAllocateDescriptorSets(*context.main_device, &allocate_info, &descriptor_set_));
 
-    buffer_settings.memory_properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    buffer_settings.memory_properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     buffer_settings.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     VK_CHECK(uniform_.init(context, gpu_iface, buffer_settings, reinterpret_cast<const uint8_t*>(&mat4x4::identity()), sizeof(mat4x4)));
 

@@ -20,7 +20,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../bin)
 file(GLOB SOURCE ${SRC_DIR}/*.cpp)
 file(GLOB HEADERS ${SRC_DIR}/*.hpp)
 
-find_library(VULKAN_LIB vulkan-1 ${THIRD_PARTY_DIR}/vulkan32)
+find_library(VULKAN_LIB vulkan-1 ${THIRD_PARTY_DIR}/vulkan)
 message(${VULKAN_LIB})
 set(LIBS ${VULKAN_LIB})
 

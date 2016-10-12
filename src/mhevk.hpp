@@ -642,21 +642,6 @@ private:
     std::vector<VkSurfaceFormatKHR> surface_formats_;
 };
 
-class Semaphore
-{
-public:
-    VkResult init(VulkanContext& context, const GPUInterface& gpu_iface);
-    void destroy(VulkanContext& context);
-
-    operator VkSemaphore() const
-    {
-        return id_;
-    }
-private:
-    VkSemaphore id_;
-    GPUInterface gpu_iface_;
-};
-
 class Queue
 {
 public:
@@ -669,17 +654,20 @@ public:
     }
 
     VkResult submit(const CommandBuffer* command_buffers, uint32_t count,
-        const Semaphore* signal_semaphores = nullptr, uint32_t signal_semaphores_count = 0);
+        const VkSemaphore* wait_semaphores = nullptr, uint32_t wait_semaphores_count = 0,
+        const VkSemaphore* signal_semaphores = nullptr, uint32_t signal_semaphores_count = 0);
     VkResult present(const Swapchain* swapchain);
     VkResult wait_idle();
 
-    const Semaphore& present_semaphore() const
+    VkSemaphore present_semaphore() const
     {
         return present_semaphore_;
     }
 private:
     VkQueue id_;
-    Semaphore present_semaphore_;
+    VkSemaphore present_semaphore_;
+    VkFence submit_fence_;
+    GPUInterface gpu_iface_;
 };
 
 class Device
@@ -748,7 +736,7 @@ public:
             depth(1),
             mip_levels(1), array_layers(1), format(VK_FORMAT_R8G8B8A8_UNORM),
             usage(VK_IMAGE_USAGE_SAMPLED_BIT),
-            aspect_mask(0)
+            aspect_mask(VK_IMAGE_ASPECT_COLOR_BIT)
         {}
     };
 
@@ -764,6 +752,11 @@ public:
     VkImageView image_view_id() const
     {
         return imageview_;
+    }
+
+    VkImage image() const
+    {
+        return image_;
     }
 
     const GPUInterface& gpu_interface() const
@@ -790,7 +783,8 @@ public:
         VkMemoryPropertyFlags memory_properties;
 
         Settings() :
-            queue_family_indices_count(1),
+            queue_family_indices(nullptr),
+            queue_family_indices_count(0),
             sharing_mode(VK_SHARING_MODE_EXCLUSIVE),
             memory_properties(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
         {}
@@ -815,54 +809,6 @@ private:
     VkDeviceMemory memory_;
     GPUInterface gpu_iface_;
     Settings settings_;
-};
-
-class Swapchain
-{
-public:
-    struct Settings
-    {
-        VkFormat format;
-        VkSharingMode image_sharing_mode;
-
-        Settings() :
-            format(VK_FORMAT_B8G8R8A8_UNORM),
-            image_sharing_mode(VK_SHARING_MODE_EXCLUSIVE)
-        {}
-    };
-
-    Swapchain() :
-        id_(VK_NULL_HANDLE),
-        device_(nullptr),
-        current_buffer_(0)
-    {}
-
-    VkResult init(VulkanContext& context, Device* physical_device, const Settings& settings);
-    void destroy(VulkanContext& context);
-
-    const std::vector<ImageView>& color_images() const
-    {
-        return color_images_;
-    }
-
-    VkResult acquire_next_image();
-    uint32_t current_buffer() const
-    {
-        return current_buffer_;
-    }
-
-    operator VkSwapchainKHR() const
-    {
-        return id_;
-    }
-private:
-    VkResult init_images(VulkanContext& context);
-
-    VkSwapchainKHR id_;
-    Device* device_;
-    Settings settings_;
-    std::vector<ImageView> color_images_;
-    uint32_t current_buffer_;
 };
 
 class RenderPass
@@ -930,6 +876,73 @@ private:
     GPUInterface gpu_iface_;
     Settings settings_;
     VkFramebuffer id_;
+};
+
+class Swapchain
+{
+public:
+    struct Settings
+    {
+        VkFormat format;
+        VkSharingMode image_sharing_mode;
+
+        Settings() :
+            format(VK_FORMAT_B8G8R8A8_UNORM),
+            image_sharing_mode(VK_SHARING_MODE_EXCLUSIVE)
+        {}
+    };
+
+    Swapchain() :
+        id_(VK_NULL_HANDLE),
+        device_(nullptr),
+        current_buffer_(0)
+    {}
+
+    VkResult init(VulkanContext& context, Device* physical_device, const Settings& settings);
+    void destroy(VulkanContext& context);
+
+    const std::vector<ImageView>& color_images() const
+    {
+        return color_images_;
+    }
+
+    VkResult acquire_next_image();
+    uint32_t current_buffer() const
+    {
+        return current_buffer_;
+    }
+
+    operator VkSwapchainKHR() const
+    {
+        return id_;
+    }
+
+    VkSemaphore next_image_semaphore() const
+    {
+        return next_image_semaphore_;
+    }
+
+    VkResult create_framebuffers(VulkanContext& context, RenderPass* render_pass);
+
+    const std::vector<Framebuffer>& framebuffers() const
+    {
+        return framebuffers_;
+    }
+
+    const Framebuffer& current_framebuffer() const
+    {
+        return framebuffers_[current_buffer_];
+    }
+private:
+    VkResult init_images(VulkanContext& context);
+
+    VkSwapchainKHR id_;
+    Device* device_;
+    Settings settings_;
+    std::vector<ImageView> color_images_;
+    std::vector<Framebuffer> framebuffers_;
+    uint32_t current_buffer_;
+    VkSemaphore next_image_semaphore_;
 };
 
 // image + view + sampler
@@ -1002,6 +1015,7 @@ public:
     CommandBuffer& bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout pipeline_layout,
         const VkDescriptorSet* descriptor_sets, uint32_t descriptor_sets_count, uint32_t first);
     CommandBuffer& draw(const Mesh& mesh, size_t part_index);
+    CommandBuffer& transfer_image_layout(VkImage image, VkImageLayout src_layout, VkImageLayout dst_layout, VkImageAspectFlags aspect_flags);
 private:
     VkCommandBuffer id_;
 };
@@ -1027,11 +1041,6 @@ private:
 struct RenderPasses
 {
     RenderPass main_render_pass;
-};
-
-struct Framebuffers
-{
-    Framebuffer main_framebuffer;
 };
 
 struct CommandPools
@@ -1086,7 +1095,6 @@ struct VulkanContext
     ImageView main_depth_stencil_image_view;
 
     RenderPasses render_passes;
-    Framebuffers framebuffers;
     CommandPools command_pools;
     DescriptorPools descriptor_pools;
 
