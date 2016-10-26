@@ -24,5 +24,6 @@ find_library(VULKAN_LIB vulkan-1 ${THIRD_PARTY_DIR}/vulkan)
 message(${VULKAN_LIB})
 set(LIBS ${VULKAN_LIB})
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/../samples/00_cube/build/ ${CMAKE_SOURCE_DIR}/../output/)
+add_subdirectory(${CMAKE_SOURCE_DIR}/../samples/00_cube/build/ ${CMAKE_SOURCE_DIR}/../output/00_cube)
+add_subdirectory(${CMAKE_SOURCE_DIR}/../samples/01_deferred/build/ ${CMAKE_SOURCE_DIR}/../output/01_deferred)
 

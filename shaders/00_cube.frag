@@ -21,6 +21,7 @@ layout (location = 1) in vec2 vs_tex;
 layout (location = 2) in vec3 vs_light_dir;
 
 layout (location = 0) out vec4 out_color;
+layout (location = 1) out vec4 out_normal;
 
 void main()
 {
@@ -28,4 +29,5 @@ void main()
     vec3 light_dir = normalize(vs_light_dir);
     float diffuse_term = max(dot(nrm, light_dir), 0.0f);
     out_color = texture(main_texture, vs_tex) * (light.diffuse * diffuse_term + vec4(0.2f, 0.2f, 0.2f, 1.0f));
+    out_normal = vec4(vs_nrm, 1.0f);
 }

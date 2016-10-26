@@ -763,6 +763,11 @@ public:
     {
         return gpu_iface_;
     }
+
+    VkFormat format() const
+    {
+        return settings_.format;
+    }
 private:
     VkImage image_;
     VkImageView imageview_;
@@ -789,6 +794,11 @@ public:
             memory_properties(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
         {}
     };
+
+    Buffer() :
+        buffer_(VK_NULL_HANDLE),
+        memory_(VK_NULL_HANDLE)
+    {}
 
     VkResult init(VulkanContext& context, const GPUInterface& gpu_iface, const Settings& settings, const uint8_t* data, uint32_t size);
     void destroy(VulkanContext& context);
@@ -822,8 +832,22 @@ public:
             VkImageLayout layout;
         };
 
+        struct DependencyDesc
+        {
+            RenderPass* render_pass;
+            VkAccessFlags src_access;
+            VkAccessFlags dst_access;
+        };
+
         AttachmentDesc* descs;
         uint32_t count;
+
+        DependencyDesc* dependencies;
+        uint32_t dependencies_count;
+
+        Settings() :
+            dependencies_count(0)
+        {}
     };
 
     VkResult init(VulkanContext& context, const GPUInterface& gpu_iface, const Settings& settings);
@@ -945,6 +969,10 @@ private:
     VkSemaphore next_image_semaphore_;
 };
 
+VkSamplerCreateInfo SamplerCreateInfo(VkFilter mag_filter, VkFilter min_filter, VkSamplerMipmapMode mimap_mode,
+    VkSamplerAddressMode address_mode_u, VkSamplerAddressMode address_mode_v, VkSamplerAddressMode address_mode_w);
+VkSemaphoreCreateInfo SemaphoreCreateInfo();
+
 // image + view + sampler
 class Texture
 {
@@ -1016,6 +1044,7 @@ public:
         const VkDescriptorSet* descriptor_sets, uint32_t descriptor_sets_count, uint32_t first);
     CommandBuffer& draw(const Mesh& mesh, size_t part_index);
     CommandBuffer& transfer_image_layout(VkImage image, VkImageLayout src_layout, VkImageLayout dst_layout, VkImageAspectFlags aspect_flags);
+    CommandBuffer& render_target_barrier(VkImage image, VkImageLayout layout, VkImageAspectFlags aspect_flags);
 private:
     VkCommandBuffer id_;
 };
@@ -1058,6 +1087,7 @@ struct DesciptorSetLayouts
 {
     VkDescriptorSetLayout mesh_layout;
     VkDescriptorSetLayout material_layout;
+    VkDescriptorSetLayout posteffect_layout;
 };
 
 struct VulkanContext
@@ -1126,6 +1156,23 @@ public:
     static void vertex_input_info(VkPipelineVertexInputStateCreateInfo& info);
 };
 
+class FullscreenLayout
+{
+public:
+    struct Vertex
+    {
+        vec4 pos;
+        vec2 tex;
+    };
+
+    static uint32_t stride()
+    {
+        return sizeof(Vertex);
+    }
+
+    static void vertex_input_info(VkPipelineVertexInputStateCreateInfo& info);
+};
+
 class Material
 {
     enum
@@ -1167,7 +1214,12 @@ struct MeshPart
 class Mesh
 {
 public:
+    Mesh() :
+        descriptor_set_(VK_NULL_HANDLE)
+    {}
+
     VkResult create_cube(vk::VulkanContext& context, const vk::GPUInterface& gpu_iface);
+    VkResult create_quad(vk::VulkanContext& context, const vk::GPUInterface& gpu_iface);
     void destroy(vk::VulkanContext& context);
 
     const std::vector<MeshPart>& parts() const

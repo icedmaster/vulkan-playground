@@ -253,6 +253,14 @@ VkResult init_descriptor_set_layouts(VulkanContext& context)
     descriptor_set_layout_create_info.bindingCount = array_size(material_layout_binding);
     VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &context.descriptor_set_layouts.material_layout));
 
+    VkDescriptorSetLayoutBinding posteffect_layout_binding[1] =
+    {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}
+    };
+    descriptor_set_layout_create_info.pBindings = posteffect_layout_binding;
+    descriptor_set_layout_create_info.bindingCount = array_size(posteffect_layout_binding);
+    VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &context.descriptor_set_layouts.posteffect_layout));
+
     return VK_SUCCESS;
 }
 
@@ -261,6 +269,28 @@ void destroy_descriptor_set_layouts(VulkanContext& context)
     vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.material_layout, context.allocation_callbacks);
     vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.mesh_layout, context.allocation_callbacks);
 }
+}
+
+VkSamplerCreateInfo SamplerCreateInfo(VkFilter mag_filter, VkFilter min_filter, VkSamplerMipmapMode mipmap_mode,
+    VkSamplerAddressMode address_mode_u, VkSamplerAddressMode address_mode_v, VkSamplerAddressMode address_mode_w)
+{
+    VkSamplerCreateInfo create_info = {};
+    create_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    create_info.addressModeU = address_mode_u;
+    create_info.addressModeV = address_mode_v;
+    create_info.addressModeW = address_mode_w;
+    create_info.mipmapMode = mipmap_mode;
+    create_info.magFilter = mag_filter;
+    create_info.minFilter = min_filter;
+
+    return create_info;
+}
+
+VkSemaphoreCreateInfo SemaphoreCreateInfo()
+{
+    VkSemaphoreCreateInfo create_info = {};
+    create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    return create_info;
 }
 
 VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height, bool enable_default_debug_layers)
@@ -281,7 +311,7 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
             "VK_LAYER_LUNARG_param_checker",  "VK_LAYER_LUNARG_swapchain",
             "VK_LAYER_LUNARG_device_limits",  "VK_LAYER_LUNARG_image",
             "VK_LAYER_GOOGLE_unique_objects", "VK_LAYER_LUNARG_standard_validation",
-            "VK_LAYER_LUNARG_core_validation"
+            "VK_LAYER_LUNARG_core_validation"//, "VK_LAYER_RENDERDOC_Capture"
         };
         context.instance_debug_layers_extensions.resize(ARRAY_SIZE(debug_layer_extensions));
         for (size_t i = 0, size = context.instance_debug_layers_extensions.size(); i < size; ++i)
@@ -921,8 +951,10 @@ VkResult Buffer::init(VulkanContext& context, const GPUInterface& gpu_iface, con
 
 void Buffer::destroy(VulkanContext& context)
 {
-    vkFreeMemory(*gpu_iface_.device, memory_, context.allocation_callbacks);
-    vkDestroyBuffer(*gpu_iface_.device, buffer_, context.allocation_callbacks);
+    if (memory_ != VK_NULL_HANDLE)
+        vkFreeMemory(*gpu_iface_.device, memory_, context.allocation_callbacks);
+    if (buffer_ != VK_NULL_HANDLE)
+        vkDestroyBuffer(*gpu_iface_.device, buffer_, context.allocation_callbacks);
 }
 
 VkResult Buffer::update(VulkanContext& context, const uint8_t* data, uint32_t size)
@@ -1036,12 +1068,34 @@ VkResult RenderPass::init(VulkanContext& context, const GPUInterface& gpu_iface,
     subpass_desc.pDepthStencilAttachment = depth_attachment_ref_ptr;
     subpass_desc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 
+    std::vector<VkSubpassDependency> dependencies(settings.dependencies_count * 2);
+    for (uint32_t i = 0, j = 0; i < settings.dependencies_count; ++i, j += 2)
+    {
+        dependencies[j].srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[j].dstSubpass = 0;
+        dependencies[j].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        dependencies[j].srcAccessMask = settings.dependencies[i].src_access;
+        dependencies[j].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[j].dstAccessMask = settings.dependencies[i].dst_access;
+        dependencies[j].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+        dependencies[j + 1] = dependencies[j];
+        dependencies[j + 1].srcSubpass = 0;
+        dependencies[j + 1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[j].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[j].dstStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dependencies[j].srcAccessMask = settings.dependencies[i].dst_access;
+        dependencies[j].dstAccessMask = settings.dependencies[i].src_access;
+    }
+
     VkRenderPassCreateInfo render_pass_create_info = {};
     render_pass_create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     render_pass_create_info.attachmentCount = settings.count;
     render_pass_create_info.pAttachments = attachment_descriptions;
     render_pass_create_info.subpassCount = 1;
     render_pass_create_info.pSubpasses = &subpass_desc;
+    render_pass_create_info.dependencyCount = dependencies.size();
+    render_pass_create_info.pDependencies = !dependencies.empty() ? &dependencies[0] : nullptr;
 
     VK_CHECK(vkCreateRenderPass(gpu_iface.device->id(), &render_pass_create_info, context.allocation_callbacks, &id_));
 
@@ -1300,6 +1354,24 @@ CommandBuffer& CommandBuffer::transfer_image_layout(VkImage image, VkImageLayout
     return *this;
 }
 
+CommandBuffer& CommandBuffer::render_target_barrier(VkImage image, VkImageLayout layout, VkImageAspectFlags aspect_flags)
+{
+    VkImageMemoryBarrier image_memory_barrier = {};
+    image_memory_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    image_memory_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    image_memory_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    image_memory_barrier.image = image;
+    image_memory_barrier.oldLayout = layout;
+    image_memory_barrier.newLayout = layout;
+    image_memory_barrier.subresourceRange.aspectMask = aspect_flags;
+    image_memory_barrier.subresourceRange.layerCount = 1;
+    image_memory_barrier.subresourceRange.levelCount = 1;
+    vkCmdPipelineBarrier(id_, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &image_memory_barrier);
+
+    return *this;
+}
+
 void GeometryLayout::vertex_input_info(VkPipelineVertexInputStateCreateInfo& info)
 {
     // vertex input
@@ -1317,6 +1389,25 @@ void GeometryLayout::vertex_input_info(VkPipelineVertexInputStateCreateInfo& inf
     info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     info.pVertexAttributeDescriptions = vi_attr_desc;
     info.vertexAttributeDescriptionCount = 4;
+    info.pVertexBindingDescriptions = &vi_binding_desc;
+    info.vertexBindingDescriptionCount = 1;
+}
+
+void FullscreenLayout::vertex_input_info(VkPipelineVertexInputStateCreateInfo& info)
+{
+    // vertex input
+    static const VkVertexInputAttributeDescription vi_attr_desc[4] =
+    {
+        { 0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0 }, // pos
+        { 1, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(vec4) } // tex
+    };
+
+    static const VkVertexInputBindingDescription vi_binding_desc = { 0, sizeof(vk::FullscreenLayout::Vertex), VK_VERTEX_INPUT_RATE_VERTEX };
+
+    memset(&info, 0, sizeof(VkPipelineVertexInputStateCreateInfo));
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    info.pVertexAttributeDescriptions = vi_attr_desc;
+    info.vertexAttributeDescriptionCount = 2;
     info.pVertexBindingDescriptions = &vi_binding_desc;
     info.vertexBindingDescriptionCount = 1;
 }
@@ -1441,10 +1532,39 @@ VkResult Mesh::create_cube(vk::VulkanContext& context, const vk::GPUInterface& g
     return VK_SUCCESS;
 }
 
+VkResult Mesh::create_quad(vk::VulkanContext& context, const vk::GPUInterface& gpu_iface)
+{
+    parts_.resize(1);
+    uint16_t indices[3] = { 0, 1, 2 };
+    vk::FullscreenLayout::Vertex vertices[3] = {
+        { { -1.0f, -1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f } },
+        { { -1.0f, 3.0f, 1.0f, 1.0f }, { 0.0f, 2.0f } },
+        { { 3.0f, -1.0f, 1.0f, 1.0f }, { 2.0f, 0.0f } },
+    };
+
+    uint32_t graphics_queue_family_index = gpu_iface.device->physical_device()->graphics_queue_family_index();
+
+    vk::Buffer::Settings buffer_settings;
+    buffer_settings.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    buffer_settings.memory_properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    VK_CHECK(vbuffer_.init(context, gpu_iface, buffer_settings, reinterpret_cast<const uint8_t*>(vertices), sizeof(vertices)));
+
+    buffer_settings.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    VK_CHECK(ibuffer_.init(context, gpu_iface, buffer_settings, reinterpret_cast<const uint8_t*>(indices), sizeof(indices)));
+
+    parts_[0].vbuffer_offset = 0;
+    parts_[0].ibuffer_offset = 0;
+    parts_[0].indices_count = array_size(indices);
+    parts_[0].material = nullptr;
+
+    return VK_SUCCESS;
+}
+
 void Mesh::destroy(vk::VulkanContext& context)
 {
     uniform_.destroy(context);
-    VK_CHECK(vkFreeDescriptorSets(*context.main_device, context.descriptor_pools.main_descriptor_pool, 1, &descriptor_set_));
+    if (descriptor_set_ != VK_NULL_HANDLE)
+        VK_CHECK(vkFreeDescriptorSets(*context.main_device, context.descriptor_pools.main_descriptor_pool, 1, &descriptor_set_));
     ibuffer_.destroy(context);
     vbuffer_.destroy(context);
 }
