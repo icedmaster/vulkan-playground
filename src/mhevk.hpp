@@ -1032,7 +1032,7 @@ public:
     void end();
 
     CommandBuffer& begin_render_pass_command(const Framebuffer* framebuffer, const vec4& color, float depth, uint32_t stencil,
-        bool clear_color, bool clear_depth, bool clear_stencil);
+        uint32_t clear_color, bool clear_depth, bool clear_stencil);
     CommandBuffer& end_render_pass_command();
     CommandBuffer& set_viewport_command(const VkRect2D& rect);
     CommandBuffer& set_scissor_command(const VkRect2D& rect);

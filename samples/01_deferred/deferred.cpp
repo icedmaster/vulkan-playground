@@ -28,6 +28,11 @@ struct LightUniformData
     vec4 direction;
 };
 
+#define RENDER_COLOR  0
+#define RENDER_NORMAL 1
+
+#define RENDER_TARGET RENDER_NORMAL
+
 using namespace mhe;
 
 struct Scene
@@ -414,7 +419,11 @@ public:
 
         VkDescriptorImageInfo image_info = {};
         image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+#if RENDER_TARGET == RENDER_COLOR
+        image_info.imageView = gbuffer->layer0.image_view_id();
+#else
         image_info.imageView = gbuffer->layer1.image_view_id();
+#endif
         image_info.sampler = sampler_;
 
         write_descriptor_set.pImageInfo = &image_info;
@@ -638,7 +647,7 @@ int main(int argc, char** argv)
 
         command_buffers[0]
             .begin()
-            .begin_render_pass_command(&gbuffer.framebuffer, vec4(0.0f, 0.0f, 0.0f, 1.0f), 1.0f, 0, true, true, true)
+            .begin_render_pass_command(&gbuffer.framebuffer, vec4(0.0f, 0.0f, 0.0f, 1.0f), 1.0f, 0, 2, true, true)
             .set_viewport_command({ 0, 0, context.width, context.height })
             .set_scissor_command({ 0, 0, context.width, context.height });
         renderers.mesh_renderer.render(command_buffers[0], context, scene);
@@ -650,8 +659,7 @@ int main(int argc, char** argv)
 
         command_buffers[1]
             .begin()
-            //.render_target_barrier(gbuffer.layer0.image(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT)
-            .begin_render_pass_command(&context.main_swapchain.current_framebuffer(), vec4(0.0f, 1.0f, 0.0f, 1.0f), 1.0f, 0, true, true, true)
+            .begin_render_pass_command(&context.main_swapchain.current_framebuffer(), vec4(0.0f, 1.0f, 0.0f, 1.0f), 1.0f, 0, 1, true, true)
             .set_viewport_command({ 0, 0, context.width, context.height })
             .set_scissor_command({ 0, 0, context.width, context.height });
         renderers.gbuffer_renderer.render(command_buffers[1], context);

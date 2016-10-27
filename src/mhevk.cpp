@@ -655,7 +655,7 @@ VkResult Device::init(VulkanContext& context, PhysicalDevice* physical_device)
     VERIFY(swapchain_extension_found, "Swapchain extension hasn't been found", VK_ERROR_INITIALIZATION_FAILED);
 
     const auto& device_debug_layers = physical_device->enabled_debug_layers();
-    uint32_t validation_layers_count = use_validation ? device_debug_layers.size() : 0;
+    uint32_t validation_layers_count = use_validation ? static_cast<uint32_t>(device_debug_layers.size()) : 0;
     const char* const* validation_layers = validation_layers_count > 0 ? &device_debug_layers[0] : nullptr;
 
     const float queue_priority = 0.0f;
@@ -1094,7 +1094,7 @@ VkResult RenderPass::init(VulkanContext& context, const GPUInterface& gpu_iface,
     render_pass_create_info.pAttachments = attachment_descriptions;
     render_pass_create_info.subpassCount = 1;
     render_pass_create_info.pSubpasses = &subpass_desc;
-    render_pass_create_info.dependencyCount = dependencies.size();
+    render_pass_create_info.dependencyCount = static_cast<uint32_t>(dependencies.size());
     render_pass_create_info.pDependencies = !dependencies.empty() ? &dependencies[0] : nullptr;
 
     VK_CHECK(vkCreateRenderPass(gpu_iface.device->id(), &render_pass_create_info, context.allocation_callbacks, &id_));
@@ -1234,26 +1234,28 @@ void CommandBuffer::end()
 
 CommandBuffer& CommandBuffer::begin_render_pass_command(
     const Framebuffer* framebuffer, const vec4& color, float depth, uint32_t stencil,
-    bool clear_color, bool clear_depth, bool clear_stencil)
+    uint32_t clear_color, bool clear_depth, bool clear_stencil)
 {
-    VkClearValue clear_values[2];
+    uint32_t clear_value_count = clear_color + (clear_depth | clear_stencil);
+
+    std::vector<VkClearValue> clear_values(clear_value_count);
     VkClearColorValue clear_color_value;
     clear_color_value.float32[0] = color.x;
     clear_color_value.float32[1] = color.y;
     clear_color_value.float32[2] = color.z;
     clear_color_value.float32[3] = color.w;
-    clear_values[0].color = clear_color_value;
+    for (uint32_t i = 0; i < clear_color; ++i)
+        clear_values[i].color = clear_color_value;
     VkClearDepthStencilValue clear_depth_stencil_value;
     clear_depth_stencil_value.depth = depth;
     clear_depth_stencil_value.stencil = stencil;
-    clear_values[1].depthStencil = clear_depth_stencil_value;
+    clear_values[clear_color].depthStencil = clear_depth_stencil_value;
 
     VkRect2D rect;
     rect.offset.x = rect.offset.y = 0;
     rect.extent.width = framebuffer->width();
     rect.extent.height = framebuffer->height();
 
-    uint32_t clear_value_count = clear_color + (clear_depth | clear_stencil);
     const VkClearValue* clear_value = clear_color ? &clear_values[0] : &clear_values[1];
 
     VkRenderPassBeginInfo render_pass_begin_info;
