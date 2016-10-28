@@ -14,6 +14,7 @@ struct PerModelUniformData
 struct PerCameraUniformData
 {
     mat4x4 vp;
+    mat4x4 inv_vp;
 };
 
 struct MaterialUniformData
@@ -31,7 +32,7 @@ struct LightUniformData
 #define RENDER_COLOR  0
 #define RENDER_NORMAL 1
 
-#define RENDER_TARGET RENDER_NORMAL
+#define RENDER_TARGET RENDER_COLOR
 
 using namespace mhe;
 
@@ -111,32 +112,10 @@ public:
         dynamic_states_info.pDynamicStates = dynamic_states;
         dynamic_states_info.dynamicStateCount = 2;
 
-        // layout
-        // TODO: create a cache of layouts
-        VkDescriptorSetLayoutBinding per_camera_layout_binding[1] =
+        VkDescriptorSetLayout descriptor_set_layouts[3] =
         {
-            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr}
-        };
-
-        VkDescriptorSetLayoutBinding per_light_layout_binding[1] =
-        {
-            { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }
-        };
-
-        VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create_info = {};
-        descriptor_set_layout_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        descriptor_set_layout_create_info.pBindings = per_camera_layout_binding;
-        descriptor_set_layout_create_info.bindingCount = array_size(per_camera_layout_binding);
-        VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &per_camera_descriptor_set_layout_));
-
-        descriptor_set_layout_create_info.pBindings = per_light_layout_binding;
-        descriptor_set_layout_create_info.bindingCount = array_size(per_light_layout_binding);
-        VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &per_light_descriptor_set_layout_));
-
-        VkDescriptorSetLayout descriptor_set_layouts[4] =
-        {
-            per_camera_descriptor_set_layout_, context.descriptor_set_layouts.mesh_layout,
-            context.descriptor_set_layouts.material_layout, per_light_descriptor_set_layout_
+            context.descriptor_set_layouts.camera_layout, context.descriptor_set_layouts.mesh_layout,
+            context.descriptor_set_layouts.material_layout
         };
 
         VkPipelineLayoutCreateInfo layout_create_info = {};
@@ -150,15 +129,15 @@ public:
         VkShaderModuleCreateInfo shader_create_info = {};
         shader_create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
         std::vector<uint8_t> shader_data;
-        bool res = read_entire_file(shader_data, "../../shaders/00_cube.vert.spv", "rb");
-        ASSERT(res == true, "Can't read shader data from file cube_00.vert.spv");
+        bool res = read_entire_file(shader_data, "../../shaders/01_fill.vert.spv", "rb");
+        ASSERT(res == true, "Can't read shader data from file 01_fill.vert.spv");
         shader_create_info.pCode = reinterpret_cast<const uint32_t*>(&shader_data[0]);
         shader_create_info.codeSize = shader_data.size();
         VK_CHECK(vkCreateShaderModule(*context.main_device, &shader_create_info, context.allocation_callbacks, &vsm));
 
         VkShaderModule fsm;
-        res = read_entire_file(shader_data, "../../shaders/00_cube.frag.spv", "rb");
-        ASSERT(res == true, "Can't read shader data from file cube_00.frag.spv");
+        res = read_entire_file(shader_data, "../../shaders/01_fill.frag.spv", "rb");
+        ASSERT(res == true, "Can't read shader data from file 01_fill.frag.spv");
         shader_create_info.pCode = reinterpret_cast<const uint32_t*>(&shader_data[0]);
         shader_create_info.codeSize = shader_data.size();
         VK_CHECK(vkCreateShaderModule(*context.main_device, &shader_create_info, context.allocation_callbacks, &fsm));
@@ -198,13 +177,8 @@ public:
     void destroy(vk::VulkanContext& context)
     {
         vkFreeDescriptorSets(*context.main_device, context.descriptor_pools.main_descriptor_pool, 1, &camera_descriptor_set_);
-        vkFreeDescriptorSets(*context.main_device, context.descriptor_pools.main_descriptor_pool, 1, &light_descriptor_set_);
-
-        vkDestroyDescriptorSetLayout(*context.main_device, per_camera_descriptor_set_layout_, context.allocation_callbacks);
-        vkDestroyDescriptorSetLayout(*context.main_device, per_light_descriptor_set_layout_, context.allocation_callbacks);
 
         per_camera_uniform_.destroy(context);
-        light_uniform_.destroy(context);
 
         vkDestroyPipeline(*context.main_device, pipeline_, context.allocation_callbacks);
         vkDestroyPipelineLayout(*context.main_device, pipeline_layout_, context.allocation_callbacks);
@@ -219,7 +193,6 @@ public:
     {
         command_buffer.bind_pipeline(pipeline_, VK_PIPELINE_BIND_POINT_GRAPHICS);
         command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &camera_descriptor_set_, 1, 0);
-        command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &light_descriptor_set_, 1, 3);
         for (const vk::Mesh& mesh : scene.meshes)
         {
             VkDescriptorSet mesh_descriptor_sets[1] =
@@ -258,17 +231,6 @@ private:
         VK_CHECK(per_camera_uniform_.init(context, gpu_iface, settings,
             reinterpret_cast<const uint8_t*>(&per_camera_uniform_data), sizeof(PerCameraUniformData)));
 
-        LightUniformData light_uniform_data;
-        light_uniform_data.diffuse = vec4(0.8f, 1.0f, 0.8f, 1.0f);
-        light_uniform_data.position = vec4::zero();
-#ifndef CUBE
-        light_uniform_data.direction = vec4(0.0f, 0.0f, 1.0f, 0.0f);
-#else
-        light_uniform_data.direction = vec4(-0.707f, 0.707f, 0.0f, 0.0f);
-#endif
-        VK_CHECK(light_uniform_.init(context, gpu_iface, settings,
-            reinterpret_cast<const uint8_t*>(&light_uniform_data), sizeof(LightUniformData)));
-
         return VK_SUCCESS;
     }
 
@@ -277,12 +239,9 @@ private:
         VkDescriptorSetAllocateInfo descriptor_set_allocate_info = {};
         descriptor_set_allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         descriptor_set_allocate_info.descriptorPool = context.descriptor_pools.main_descriptor_pool;
-        descriptor_set_allocate_info.pSetLayouts = &per_camera_descriptor_set_layout_;
+        descriptor_set_allocate_info.pSetLayouts = &context.descriptor_set_layouts.camera_layout;
         descriptor_set_allocate_info.descriptorSetCount = 1;
         VK_CHECK(vkAllocateDescriptorSets(*context.main_device, &descriptor_set_allocate_info, &camera_descriptor_set_));
-
-        descriptor_set_allocate_info.pSetLayouts = &per_light_descriptor_set_layout_;
-        VK_CHECK(vkAllocateDescriptorSets(*context.main_device, &descriptor_set_allocate_info, &light_descriptor_set_));
 
         VkDescriptorBufferInfo camera_uniforms_info[1] =
         {
@@ -298,27 +257,15 @@ private:
         write_desc_set.dstBinding = 0;
         vkUpdateDescriptorSets(*context.main_device, 1, &write_desc_set, 0, nullptr);
 
-        VkDescriptorBufferInfo light_uniforms_info[1] =
-        {
-            light_uniform_.descriptor_buffer_info()
-        };
-
-        write_desc_set.dstSet = light_descriptor_set_;
-        write_desc_set.pBufferInfo = light_uniforms_info;
-        write_desc_set.descriptorCount = array_size(light_uniforms_info);
-        vkUpdateDescriptorSets(*context.main_device, 1, &write_desc_set, 0, nullptr);
+        context.descriptor_sets.main_camera_descriptor_set = camera_descriptor_set_;
     }
 
     VkPipeline pipeline_;
     VkPipelineLayout pipeline_layout_;
-    VkDescriptorSetLayout per_camera_descriptor_set_layout_;
-    VkDescriptorSetLayout per_light_descriptor_set_layout_;
 
     VkDescriptorSet camera_descriptor_set_;
-    VkDescriptorSet light_descriptor_set_;
 
     vk::Buffer per_camera_uniform_;
-    vk::Buffer light_uniform_;
 };
 
 struct GBuffer
@@ -396,16 +343,17 @@ public:
         dynamic_states_info.dynamicStateCount = 2;
 
         // layout
-        VkDescriptorSetLayout descriptor_set_layouts[1] =
+        VkDescriptorSetLayout descriptor_set_layouts[2] =
         {
-            context.descriptor_set_layouts.posteffect_layout
+            context.descriptor_set_layouts.camera_layout,
+            context.descriptor_set_layouts.gbuffer_layout
         };
 
         VkDescriptorSetAllocateInfo descriptor_set_allocate_info = {};
         descriptor_set_allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         descriptor_set_allocate_info.descriptorPool = context.descriptor_pools.main_descriptor_pool;
-        descriptor_set_allocate_info.pSetLayouts = descriptor_set_layouts;
-        descriptor_set_allocate_info.descriptorSetCount = array_size(descriptor_set_layouts);
+        descriptor_set_allocate_info.pSetLayouts = &context.descriptor_set_layouts.gbuffer_layout;
+        descriptor_set_allocate_info.descriptorSetCount = 1;
         VK_CHECK(vkAllocateDescriptorSets(*context.main_device, &descriptor_set_allocate_info, &descriptor_set_));
         // update the descriptor set
         VkWriteDescriptorSet write_descriptor_set = {};
@@ -417,18 +365,18 @@ public:
             VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
         VK_CHECK(vkCreateSampler(*context.main_device, &sampler_create_info, context.allocation_callbacks, &sampler_));
 
-        VkDescriptorImageInfo image_info = {};
-        image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-#if RENDER_TARGET == RENDER_COLOR
-        image_info.imageView = gbuffer->layer0.image_view_id();
-#else
-        image_info.imageView = gbuffer->layer1.image_view_id();
-#endif
-        image_info.sampler = sampler_;
+        VkDescriptorImageInfo image_info[3];
+        image_info[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        image_info[0].imageView = gbuffer->layer0.image_view_id();
+        image_info[0].sampler = sampler_;
+        image_info[1] = image_info[0];
+        image_info[2] = image_info[0];
+        image_info[1].imageView = gbuffer->layer1.image_view_id();
+        image_info[2].imageView = context.main_depth_stencil_image_view.image_view_id();
 
-        write_descriptor_set.pImageInfo = &image_info;
+        write_descriptor_set.pImageInfo = image_info;
         write_descriptor_set.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write_descriptor_set.descriptorCount = 1;
+        write_descriptor_set.descriptorCount = array_size(image_info);
         vkUpdateDescriptorSets(*context.main_device, 1, &write_descriptor_set, 0, nullptr);
 
         VkPipelineLayoutCreateInfo layout_create_info = {};
@@ -498,7 +446,8 @@ public:
     void render(vk::CommandBuffer& command_buffer, vk::VulkanContext& context)
     {
         command_buffer.bind_pipeline(pipeline_, VK_PIPELINE_BIND_POINT_GRAPHICS);
-        command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &descriptor_set_, 1, 0);
+        command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &context.descriptor_sets.main_camera_descriptor_set, 1, 0);
+        command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &descriptor_set_, 1, 1);
         command_buffer.draw(quad_, 0);
     }
 private:

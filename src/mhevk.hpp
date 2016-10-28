@@ -1085,9 +1085,15 @@ struct DescriptorPools
 
 struct DesciptorSetLayouts
 {
+    VkDescriptorSetLayout camera_layout;
     VkDescriptorSetLayout mesh_layout;
     VkDescriptorSetLayout material_layout;
-    VkDescriptorSetLayout posteffect_layout;
+    VkDescriptorSetLayout gbuffer_layout;
+};
+
+struct DescriptorSets
+{
+    VkDescriptorSet main_camera_descriptor_set;
 };
 
 struct VulkanContext
@@ -1129,6 +1135,7 @@ struct VulkanContext
     DescriptorPools descriptor_pools;
 
     DesciptorSetLayouts descriptor_set_layouts;
+    DescriptorSets descriptor_sets;
 
     VkPipelineCache main_pipeline_cache;
 

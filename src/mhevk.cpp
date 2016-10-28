@@ -232,13 +232,22 @@ VkResult init_descriptor_pools(VulkanContext& context)
 
 VkResult init_descriptor_set_layouts(VulkanContext& context)
 {
+    VkDescriptorSetLayoutBinding per_camera_layout_binding[1] =
+    {
+        { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr }
+    };
+
+    VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create_info = {};
+    descriptor_set_layout_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    descriptor_set_layout_create_info.pBindings = per_camera_layout_binding;
+    descriptor_set_layout_create_info.bindingCount = array_size(per_camera_layout_binding);
+    VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &context.descriptor_set_layouts.camera_layout));
+
     VkDescriptorSetLayoutBinding per_model_layout_binding[1] =
     {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr }
     };
 
-    VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create_info = {};
-    descriptor_set_layout_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     descriptor_set_layout_create_info.pBindings = per_model_layout_binding;
     descriptor_set_layout_create_info.bindingCount = array_size(per_model_layout_binding);
     VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &context.descriptor_set_layouts.mesh_layout));
@@ -253,13 +262,15 @@ VkResult init_descriptor_set_layouts(VulkanContext& context)
     descriptor_set_layout_create_info.bindingCount = array_size(material_layout_binding);
     VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &context.descriptor_set_layouts.material_layout));
 
-    VkDescriptorSetLayoutBinding posteffect_layout_binding[1] =
+    VkDescriptorSetLayoutBinding gbuffer_layout_binding[3] =
     {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}
     };
-    descriptor_set_layout_create_info.pBindings = posteffect_layout_binding;
-    descriptor_set_layout_create_info.bindingCount = array_size(posteffect_layout_binding);
-    VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &context.descriptor_set_layouts.posteffect_layout));
+    descriptor_set_layout_create_info.pBindings = gbuffer_layout_binding;
+    descriptor_set_layout_create_info.bindingCount = array_size(gbuffer_layout_binding);
+    VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &context.descriptor_set_layouts.gbuffer_layout));
 
     return VK_SUCCESS;
 }
@@ -268,6 +279,8 @@ void destroy_descriptor_set_layouts(VulkanContext& context)
 {
     vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.material_layout, context.allocation_callbacks);
     vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.mesh_layout, context.allocation_callbacks);
+    vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.gbuffer_layout, context.allocation_callbacks);
+    vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.camera_layout, context.allocation_callbacks);
 }
 }
 
@@ -374,7 +387,7 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     ds_settings.width = context.width;
     ds_settings.height = context.height;
     ds_settings.format = VK_FORMAT_D24_UNORM_S8_UINT;
-    ds_settings.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    ds_settings.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     ds_settings.aspect_mask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
 
     GPUInterface gpu_iface;
