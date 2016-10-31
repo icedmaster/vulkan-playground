@@ -306,6 +306,16 @@ VkSemaphoreCreateInfo SemaphoreCreateInfo()
     return create_info;
 }
 
+VkDescriptorSetAllocateInfo DescriptorSetAllocateInfo(VkDescriptorPool descriptor_pool, VkDescriptorSetLayout* layouts, uint32_t count)
+{
+    VkDescriptorSetAllocateInfo allocate_info = {};
+    allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocate_info.descriptorPool = descriptor_pool;
+    allocate_info.pSetLayouts = layouts;
+    allocate_info.descriptorSetCount = count;
+    return allocate_info;
+}
+
 VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32_t width, uint32_t height, bool enable_default_debug_layers)
 {
     context.width = width;

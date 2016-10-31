@@ -12,6 +12,13 @@ layout (set = 1, binding = 0) uniform sampler2D albedo_texture;
 layout (set = 1, binding = 1) uniform sampler2D normal_texture;
 layout (set = 1, binding = 2) uniform sampler2D depth_texture;
 
+layout (set = 2, binding = 0) uniform Light
+{
+    vec4 diffuse;
+    vec4 position;
+    vec4 direction;
+} light;
+
 layout (location = 0) in vec2 vs_tex;
 
 layout (location = 0) out vec4 out_color;
@@ -22,5 +29,10 @@ void main()
     vec4 pos_cs = vec4(vs_tex * 2.0f - 1.0f, depth, 1.0f);
     vec4 pos = inv_vp * pos_cs;
     vec3 pos_ws = pos.xyz / pos.w;
-    out_color = texture(albedo_texture, vs_tex);
+
+    vec3 nrm = texture(normal_texture, vs_tex).xyz;
+
+    float ndotl = dot(nrm, light.direction.xyz);
+
+    out_color = texture(albedo_texture, vs_tex) * (ndotl + 0.2f);
 }

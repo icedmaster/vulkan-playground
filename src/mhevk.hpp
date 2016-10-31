@@ -181,6 +181,11 @@ public:
         m_[3][0] = a30; m_[3][1] = a31; m_[3][2] = a32, m_[3][3] = a33;
     }
 
+    void set(const T* data)
+    {
+        memcpy(&m_, data, 16 * sizeof(T));
+    }
+
     T* data()
     {
         return reinterpret_cast<T*>(m_);
@@ -214,6 +219,16 @@ public:
             MUL(2, 0), MUL(2, 1), MUL(2, 2), MUL(2, 3),
             MUL(3, 0), MUL(3, 1), MUL(3, 2), MUL(3, 3));
         return res;
+    }
+
+    matrix4x4& operator*= (T v)
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            for (int j = 0; j < 4; ++j)
+                m_[i][j] *= v;
+        }
+        return *this;
     }
 
     vector4<T> row(size_t index) const
@@ -254,6 +269,57 @@ public:
         matrix4x4 res = *this;
         res.transpose();
         return res;
+    }
+
+    void invert()
+    {
+        T res[4][4];
+        T m2233 = m_[2][2] * m_[3][3] - m_[2][3] * m_[3][2];
+        T m2133 = m_[2][1] * m_[3][3] - m_[2][3] * m_[3][1];
+        T m2132 = m_[2][1] * m_[3][2] - m_[2][2] * m_[3][1];
+        T m1033 = m_[1][0] * m_[3][3] - m_[1][3] * m_[3][0];
+        T m1032 = m_[1][0] * m_[3][2] - m_[1][2] * m_[3][0];
+        T m2032 = m_[2][0] * m_[3][2] - m_[2][2] * m_[3][0];
+        T m2031 = m_[2][0] * m_[3][1] - m_[2][1] * m_[3][0];
+        T m2033 = m_[2][0] * m_[3][3] - m_[2][3] * m_[3][0];
+        T m1233 = m_[1][2] * m_[3][3] - m_[1][3] * m_[3][2];
+        T m1133 = m_[1][1] * m_[3][3] - m_[1][3] * m_[3][1];
+        T m1132 = m_[1][1] * m_[3][2] - m_[1][2] * m_[3][1];
+        T m1031 = m_[1][0] * m_[3][1] - m_[1][1] * m_[3][0];
+        T m1223 = m_[1][2] * m_[2][3] - m_[1][3] * m_[2][2];
+        T m1123 = m_[1][1] * m_[2][3] - m_[1][3] * m_[2][1];
+        T m1122 = m_[1][1] * m_[2][2] - m_[1][2] * m_[2][1];
+        T m1023 = m_[1][0] * m_[2][3] - m_[1][3] * m_[2][0];
+        T m1022 = m_[1][0] * m_[2][2] - m_[1][2] * m_[2][0];
+        T m1021 = m_[1][0] * m_[2][1] - m_[1][1] * m_[2][0];
+
+        res[0][0] = m_[1][1] * m2233 - m_[1][2] * m2133 + m_[1][3] * m2132;
+        res[1][0] = -(m_[1][0] * m2233 - m_[1][2] * m2033 + m_[1][3] * m2032);
+        res[2][0] = m_[1][0] * m2133 - m_[1][1] * m2033 + m_[1][3] * m2031;
+        res[3][0] = -(m_[1][0] * m2132 - m_[1][1] * m2032 + m_[1][2] * m2031);
+        res[0][1] = -(m_[0][1] * m2233 - m_[0][2] * m2133 + m_[0][3] * m2132);
+        res[1][1] = m_[0][0] * m2233 - m_[0][2] * m2033 + m_[0][3] * m2032;
+        res[2][1] = -(m_[0][0] * m2133 - m_[0][1] * m2033 + m_[0][3] * m2031);
+        res[3][1] = m_[0][0] * m2132 - m_[0][1] * m2032 + m_[0][2] * m2031;
+        res[0][2] = m_[0][1] * m1233 - m_[0][2] * m1133 + m_[0][3] * m1132;
+        res[1][2] = -(m_[0][0] * m1233 - m_[0][2] * m1033 + m_[0][3] * m1032);
+        res[2][2] = m_[0][0] * m1133 - m_[0][1] * m1033 + m_[0][3] * m1031;
+        res[3][2] = -(m_[0][0] * m1132 - m_[0][1] * m1032 + m_[0][2] * m1031);
+        res[0][3] = -(m_[0][1] * m1223 - m_[0][2] * m1123 + m_[0][3] * m1122);
+        res[1][3] = m_[0][0] * m1223 - m_[0][2] * m1023 + m_[0][3] * m1022;
+        res[2][3] = -(m_[0][0] * m1123 - m_[0][1] * m1023 + m_[0][3] * m1021);
+        res[3][3] = m_[0][0] * m1122 - m_[0][1] * m1022 + m_[0][2] * m1021;
+
+        T det = m_[0][0] * res[0][0] + m_[0][1] * res[1][0] + m_[0][2] * res[2][0] + m_[0][3] * res[3][0];
+        if (det == 0)
+        {
+            assert(0);
+            load_identity();
+            return;
+        }
+        float inv_det = 1.0f / det;
+        set(reinterpret_cast<const T*>(res));
+        *this *= inv_det;
     }
 
     static matrix4x4 identity()
@@ -339,6 +405,14 @@ template <class T>
 matrix4x4<T> transpose(const matrix4x4<T>& m)
 {
     return m.transposed();
+}
+
+template <class T>
+matrix4x4<T> inverse(const matrix4x4<T>& m)
+{
+    matrix4x4<T> copy = m;
+    copy.invert();
+    return copy;
 }
 
 typedef vector2<float> vec2;
@@ -972,6 +1046,7 @@ private:
 VkSamplerCreateInfo SamplerCreateInfo(VkFilter mag_filter, VkFilter min_filter, VkSamplerMipmapMode mimap_mode,
     VkSamplerAddressMode address_mode_u, VkSamplerAddressMode address_mode_v, VkSamplerAddressMode address_mode_w);
 VkSemaphoreCreateInfo SemaphoreCreateInfo();
+VkDescriptorSetAllocateInfo DescriptorSetAllocateInfo(VkDescriptorPool descriptor_pool, VkDescriptorSetLayout* layouts, uint32_t count);
 
 // image + view + sampler
 class Texture

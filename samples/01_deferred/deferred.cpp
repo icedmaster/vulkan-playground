@@ -228,6 +228,7 @@ private:
         PerCameraUniformData per_camera_uniform_data;
         per_camera_uniform_data.vp = mat4x4::look_at(vec3(-2.0f, 4.0f, 10.0f), vec3(0.0f, 0.0f, 0.0f), vec3::up()) *
             mat4x4::perspective(deg_to_rad(60.0f), 1.0f, 0.1f, 20.0f);
+        per_camera_uniform_data.inv_vp = inverse(per_camera_uniform_data.vp);
         VK_CHECK(per_camera_uniform_.init(context, gpu_iface, settings,
             reinterpret_cast<const uint8_t*>(&per_camera_uniform_data), sizeof(PerCameraUniformData)));
 
@@ -283,6 +284,42 @@ public:
     {
         gbuffer_ = gbuffer;
 
+        // light descriptor set
+        VkDescriptorSetLayoutBinding light_layout_binding[1] =
+        {
+            { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr }
+        };
+
+        VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create_info = {};
+        descriptor_set_layout_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        descriptor_set_layout_create_info.pBindings = light_layout_binding;
+        descriptor_set_layout_create_info.bindingCount = array_size(light_layout_binding);
+        VK_CHECK(vkCreateDescriptorSetLayout(*context.main_device, &descriptor_set_layout_create_info, context.allocation_callbacks, &light_descriptor_set_layout_));
+
+        VkDescriptorSetAllocateInfo descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo(context.descriptor_pools.main_descriptor_pool,
+            &light_descriptor_set_layout_, 1);
+        VK_CHECK(vkAllocateDescriptorSets(*context.main_device, &descriptor_set_allocate_info, &light_discriptor_set_));
+
+        vk::Buffer::Settings uniform_settings;
+        uniform_settings.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+        uniform_settings.memory_properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+        LightUniformData light_uniform_data;
+        light_uniform_data.diffuse = vec4(0.8f, 1.0f, 0.8f, 1.0f);
+        light_uniform_data.position = vec4::zero();
+        light_uniform_data.direction = vec4(-0.707f, 0.707f, 0.0f, 0.0f);
+        VK_CHECK(light_uniform_.init(context, context.default_gpu_interface, uniform_settings,
+            reinterpret_cast<const uint8_t*>(&light_uniform_data), sizeof(LightUniformData)));
+
+        VkWriteDescriptorSet write_descriptor_set = {};
+        write_descriptor_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write_descriptor_set.dstSet = light_discriptor_set_;
+        write_descriptor_set.pBufferInfo = &light_uniform_.descriptor_buffer_info();
+        write_descriptor_set.descriptorCount = 1;
+        write_descriptor_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        vkUpdateDescriptorSets(*context.main_device, 1, &write_descriptor_set, 0, nullptr);
+
+        // pipeline
         VkGraphicsPipelineCreateInfo create_info = {};
         create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         create_info.renderPass = context.render_passes.main_render_pass;
@@ -343,21 +380,19 @@ public:
         dynamic_states_info.dynamicStateCount = 2;
 
         // layout
-        VkDescriptorSetLayout descriptor_set_layouts[2] =
+        VkDescriptorSetLayout descriptor_set_layouts[3] =
         {
             context.descriptor_set_layouts.camera_layout,
-            context.descriptor_set_layouts.gbuffer_layout
+            context.descriptor_set_layouts.gbuffer_layout,
+            light_descriptor_set_layout_
         };
 
-        VkDescriptorSetAllocateInfo descriptor_set_allocate_info = {};
         descriptor_set_allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         descriptor_set_allocate_info.descriptorPool = context.descriptor_pools.main_descriptor_pool;
         descriptor_set_allocate_info.pSetLayouts = &context.descriptor_set_layouts.gbuffer_layout;
         descriptor_set_allocate_info.descriptorSetCount = 1;
         VK_CHECK(vkAllocateDescriptorSets(*context.main_device, &descriptor_set_allocate_info, &descriptor_set_));
         // update the descriptor set
-        VkWriteDescriptorSet write_descriptor_set = {};
-        write_descriptor_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         write_descriptor_set.dstSet = descriptor_set_;
         write_descriptor_set.dstBinding = 0;
 
@@ -436,6 +471,9 @@ public:
 
     void destroy(vk::VulkanContext& context)
     {
+        light_uniform_.destroy(context);
+        vkFreeDescriptorSets(*context.main_device, context.descriptor_pools.main_descriptor_pool, 1, &light_discriptor_set_);
+        vkDestroyDescriptorSetLayout(*context.main_device, light_descriptor_set_layout_, context.allocation_callbacks);
         quad_.destroy(context);
         vkDestroySampler(*context.main_device, sampler_, context.allocation_callbacks);
         vkFreeDescriptorSets(*context.main_device, context.descriptor_pools.main_descriptor_pool, 1, &descriptor_set_);
@@ -448,12 +486,16 @@ public:
         command_buffer.bind_pipeline(pipeline_, VK_PIPELINE_BIND_POINT_GRAPHICS);
         command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &context.descriptor_sets.main_camera_descriptor_set, 1, 0);
         command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &descriptor_set_, 1, 1);
+        command_buffer.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, &light_discriptor_set_, 1, 2);
         command_buffer.draw(quad_, 0);
     }
 private:
     VkPipeline pipeline_;
     VkPipelineLayout pipeline_layout_;
     VkDescriptorSet descriptor_set_;
+    VkDescriptorSetLayout light_descriptor_set_layout_;
+    VkDescriptorSet light_discriptor_set_;
+    vk::Buffer light_uniform_;
     VkSampler sampler_;
     vk::Mesh quad_;
     GBuffer* gbuffer_;
