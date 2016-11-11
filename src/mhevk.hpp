@@ -1171,6 +1171,36 @@ struct DescriptorSets
     VkDescriptorSet main_camera_descriptor_set;
 };
 
+class Material
+{
+    enum
+    {
+        albedo_texture = 0,
+        max_texture_index
+    };
+public:
+    VkResult init(VulkanContext& context, const GPUInterface& gpu_iface);
+    void destroy(VulkanContext& context);
+
+    void set_albedo(Texture* texture)
+    {
+        textures_[albedo_texture] = texture;
+        build_descriptor_set();
+    }
+
+    VkDescriptorSet descriptor_set() const
+    {
+        return descriptor_set_;
+    }
+private:
+    void build_descriptor_set();
+
+    Texture* textures_[max_texture_index];
+    Buffer uniform_;
+    VkDescriptorSet descriptor_set_;
+    GPUInterface gpu_iface_;
+};
+
 struct VulkanContext
 {
     std::vector<const char*> instance_debug_layers_extensions;
@@ -1214,6 +1244,9 @@ struct VulkanContext
 
     VkPipelineCache main_pipeline_cache;
 
+    Texture default_texture;
+    Material default_material;
+
     VulkanContext() :
         allocation_callbacks(nullptr)
     {}
@@ -1255,36 +1288,6 @@ public:
     static void vertex_input_info(VkPipelineVertexInputStateCreateInfo& info);
 };
 
-class Material
-{
-    enum
-    {
-        albedo_texture = 0,
-        max_texture_index
-    };
-public:
-    VkResult init(VulkanContext& context, const GPUInterface& gpu_iface);
-    void destroy(VulkanContext& context);
-
-    void set_albedo(Texture* texture)
-    {
-        textures_[albedo_texture] = texture;
-        build_descriptor_set();
-    }
-
-    VkDescriptorSet descriptor_set() const
-    {
-        return descriptor_set_;
-    }
-private:
-    void build_descriptor_set();
-
-    Texture* textures_[max_texture_index];
-    Buffer uniform_;
-    VkDescriptorSet descriptor_set_;
-    GPUInterface gpu_iface_;
-};
-
 struct MeshPart
 {
     uint32_t ibuffer_offset;
@@ -1302,6 +1305,7 @@ public:
 
     VkResult create_cube(vk::VulkanContext& context, const vk::GPUInterface& gpu_iface);
     VkResult create_quad(vk::VulkanContext& context, const vk::GPUInterface& gpu_iface);
+    VkResult create(const char* filename, vk::VulkanContext& context, const vk::GPUInterface& gpu_iface);
     void destroy(vk::VulkanContext& context);
 
     const std::vector<MeshPart>& parts() const
@@ -1329,6 +1333,11 @@ public:
         parts_[index].material = material;
     }
 private:
+    VkResult init_descriptor_set(VulkanContext& context, const vk::GPUInterface& gpu_iface);
+    VkResult init_buffers(VulkanContext& context, const vk::GPUInterface& gpu_iface,
+        const uint8_t* vertices, uint32_t vertices_data_size,
+        const uint8_t* indices, uint32_t indices_data_size);
+
     std::vector<MeshPart> parts_;
     vk::Buffer vbuffer_;
     vk::Buffer ibuffer_;

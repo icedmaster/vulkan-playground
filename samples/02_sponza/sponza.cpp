@@ -2,8 +2,6 @@
 
 #include <limits>
 
-#define CUBE
-
 using namespace mhe;
 
 struct PerModelUniformData
@@ -28,11 +26,6 @@ struct LightUniformData
     vec4 position;
     vec4 direction;
 };
-
-#define RENDER_COLOR  0
-#define RENDER_NORMAL 1
-
-#define RENDER_TARGET RENDER_COLOR
 
 using namespace mhe;
 
@@ -574,7 +567,7 @@ void destroy_gbuffer(GBuffer& gbuffer, vk::VulkanContext& context)
 int main(int argc, char** argv)
 {
     vk::VulkanContext context;
-    VkResult res = vk::init_vulkan_context(context, "vk_deferred", 1280, 720, true);
+    VkResult res = vk::init_vulkan_context(context, "vk_sponza", 1280, 720, true);
     VERIFY(res == VK_SUCCESS, "init_vulkan_context failed", -1);
 
     GBuffer gbuffer;
@@ -582,29 +575,6 @@ int main(int argc, char** argv)
 
     Renderers renderers;
     create_renderers(renderers, context, gbuffer);
-
-    Scene scene;
-    vk::Mesh mesh;
-    mesh.create_cube(context, context.default_gpu_interface);
-    scene.meshes.push_back(mesh);
-
-    // load an image
-    vk::ImageData image_data;
-    VK_CHECK(vk::load_tga_image(image_data, "../../assets/checker.tga"));
-    // create a texture
-    vk::ImageView::Settings image_settings;
-    image_settings.width = image_data.width;
-    image_settings.height = image_data.height;
-    image_settings.format = image_data.format;
-    
-    vk::Texture texture;
-    VK_CHECK(texture.init(context, context.default_gpu_interface, image_settings, vk::Texture::SamplerSettings(),
-        &image_data.data[0], image_data.data.size()));
-
-    vk::Material material;
-    VK_CHECK(material.init(context, context.default_gpu_interface));
-    material.set_albedo(&texture);
-    scene.meshes[0].set_material(0, &material);
 
     vk::CommandBuffer command_buffers[2];
     context.command_pools.main_graphics_command_pool.create_command_buffers(context, command_buffers, 2);
@@ -624,6 +594,12 @@ int main(int argc, char** argv)
         .end();
     context.main_device->graphics_queue().submit(command_buffers, 1);
     context.main_device->graphics_queue().wait_idle();
+
+    vk::Mesh mesh;
+    mesh.create("../../assets/cube.fbx", context, context.default_gpu_interface);
+
+    Scene scene;
+    scene.meshes.push_back(mesh);
 
     while (app_message_loop(context))
     {
@@ -657,10 +633,6 @@ int main(int argc, char** argv)
         graphics_queue.present(&context.main_swapchain);
         graphics_queue.wait_idle();
     }
-
-    mesh.destroy(context);
-    material.destroy(context);
-    texture.destroy(context);
 
     destroy_gbuffer(gbuffer, context);
 

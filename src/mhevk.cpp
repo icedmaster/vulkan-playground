@@ -1,5 +1,9 @@
 #include "mhevk.hpp"
 
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
 namespace mhe {
 namespace vk {
 
@@ -282,6 +286,19 @@ void destroy_descriptor_set_layouts(VulkanContext& context)
     vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.gbuffer_layout, context.allocation_callbacks);
     vkDestroyDescriptorSetLayout(*context.main_device, context.descriptor_set_layouts.camera_layout, context.allocation_callbacks);
 }
+
+VkResult init_default_texture(VulkanContext& context)
+{
+    ImageView::Settings imageview_settings;
+    imageview_settings.width = 1;
+    imageview_settings.height = 1;
+    imageview_settings.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageview_settings.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    uint32_t data = 0xffffffff;
+    VK_CHECK(context.default_texture.init(context, context.default_gpu_interface, imageview_settings, Texture::SamplerSettings(),
+        reinterpret_cast<const uint8_t*>(&data), sizeof(data)));
+    return VK_SUCCESS;
+}
 }
 
 VkSamplerCreateInfo SamplerCreateInfo(VkFilter mag_filter, VkFilter min_filter, VkSamplerMipmapMode mipmap_mode,
@@ -425,11 +442,18 @@ VkResult init_vulkan_context(VulkanContext& context, const char* appname, uint32
     VK_CHECK(init_descriptor_pools(context));
     VK_CHECK(init_descriptor_set_layouts(context));
 
+    VK_CHECK(init_default_texture(context));
+    VK_CHECK(context.default_material.init(context, context.default_gpu_interface));
+    context.default_material.set_albedo(&context.default_texture);
+
     return VK_SUCCESS;
 }
 
 void destroy_vulkan_context(VulkanContext& context)
 {
+    context.default_material.destroy(context);
+    context.default_texture.destroy(context);
+
     destroy_descriptor_set_layouts(context);
 
     vkDestroyDescriptorPool(*context.main_device, context.descriptor_pools.main_descriptor_pool, context.allocation_callbacks);
@@ -1521,19 +1545,20 @@ VkResult Mesh::create_cube(vk::VulkanContext& context, const vk::GPUInterface& g
 
     uint32_t graphics_queue_family_index = gpu_iface.device->physical_device()->graphics_queue_family_index();
 
-    vk::Buffer::Settings buffer_settings;
-    buffer_settings.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    buffer_settings.memory_properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-    VK_CHECK(vbuffer_.init(context, gpu_iface, buffer_settings, reinterpret_cast<const uint8_t*>(cube_vertices), sizeof(cube_vertices)));
-
-    buffer_settings.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-    VK_CHECK(ibuffer_.init(context, gpu_iface, buffer_settings, reinterpret_cast<const uint8_t*>(cube_indices), sizeof(cube_indices)));
-
     parts_[0].vbuffer_offset = 0;
     parts_[0].ibuffer_offset = 0;
     parts_[0].indices_count = array_size(cube_indices);
     parts_[0].material = nullptr;
 
+    VK_CHECK(init_descriptor_set(context, gpu_iface));
+    VK_CHECK(init_buffers(context, gpu_iface, reinterpret_cast<const uint8_t*>(cube_vertices), sizeof(cube_vertices),
+        reinterpret_cast<const uint8_t*>(cube_indices), sizeof(cube_indices)));
+
+    return VK_SUCCESS;
+}
+
+VkResult Mesh::init_descriptor_set(VulkanContext& context, const vk::GPUInterface& gpu_iface)
+{
     VkDescriptorSetAllocateInfo allocate_info = {};
     allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocate_info.pSetLayouts = &context.descriptor_set_layouts.mesh_layout;
@@ -1541,6 +1566,7 @@ VkResult Mesh::create_cube(vk::VulkanContext& context, const vk::GPUInterface& g
     allocate_info.descriptorPool = context.descriptor_pools.main_descriptor_pool;
     VK_CHECK(vkAllocateDescriptorSets(*context.main_device, &allocate_info, &descriptor_set_));
 
+    vk::Buffer::Settings buffer_settings;
     buffer_settings.memory_properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     buffer_settings.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     VK_CHECK(uniform_.init(context, gpu_iface, buffer_settings, reinterpret_cast<const uint8_t*>(&mat4x4::identity()), sizeof(mat4x4)));
@@ -1553,6 +1579,21 @@ VkResult Mesh::create_cube(vk::VulkanContext& context, const vk::GPUInterface& g
     write_descriptor_set.dstSet = descriptor_set_;
     write_descriptor_set.pBufferInfo = &uniform_.descriptor_buffer_info();
     vkUpdateDescriptorSets(*gpu_iface.device, 1, &write_descriptor_set, 0, nullptr);
+
+    return VK_SUCCESS;
+}
+
+VkResult Mesh::init_buffers(VulkanContext& context, const vk::GPUInterface& gpu_iface,
+    const uint8_t* vertices, uint32_t vertices_data_size,
+    const uint8_t* indices, uint32_t indices_data_size)
+{
+    vk::Buffer::Settings buffer_settings;
+    buffer_settings.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    buffer_settings.memory_properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    VK_CHECK(vbuffer_.init(context, gpu_iface, buffer_settings, vertices, vertices_data_size));
+
+    buffer_settings.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    VK_CHECK(ibuffer_.init(context, gpu_iface, buffer_settings, indices, indices_data_size));
 
     return VK_SUCCESS;
 }
@@ -1581,6 +1622,54 @@ VkResult Mesh::create_quad(vk::VulkanContext& context, const vk::GPUInterface& g
     parts_[0].ibuffer_offset = 0;
     parts_[0].indices_count = array_size(indices);
     parts_[0].material = nullptr;
+
+    return VK_SUCCESS;
+}
+
+VkResult Mesh::create(const char* filename, vk::VulkanContext& context, const vk::GPUInterface& gpu_iface)
+{
+    Assimp::Importer importer;
+    const aiScene* assimp_scene = importer.ReadFile(filename, aiProcess_CalcTangentSpace | aiProcess_Triangulate |
+        aiProcess_GenNormals | aiProcess_GenUVCoords | aiProcess_TransformUVCoords);
+    VERIFY(assimp_scene, "Error occured during the scene parsing", VK_ERROR_INITIALIZATION_FAILED);
+
+    std::vector<GeometryLayout::Vertex> vertices;
+    std::vector<uint16_t> indices;
+    parts_.resize(assimp_scene->mNumMeshes);
+    for (size_t i = 0, size = assimp_scene->mNumMeshes; i < size; ++i)
+    {
+        MeshPart& part = parts_[i];
+        part.vbuffer_offset = vertices.size();
+        part.ibuffer_offset = indices.size();
+        part.indices_count = assimp_scene->mMeshes[i]->mNumFaces * 3;
+        for (size_t j = 0, jsize = assimp_scene->mMeshes[i]->mNumFaces; j < jsize; ++j)
+        {
+            ASSERT(assimp_scene->mMeshes[i]->mFaces[j].mNumIndices == 3, "The mesh must be triangulated");
+            indices.push_back(part.vbuffer_offset + assimp_scene->mMeshes[i]->mFaces[j].mIndices[0]);
+            indices.push_back(part.vbuffer_offset + assimp_scene->mMeshes[i]->mFaces[j].mIndices[1]);
+            indices.push_back(part.vbuffer_offset + assimp_scene->mMeshes[i]->mFaces[j].mIndices[2]);
+        }
+
+        for (size_t j = 0, jsize = assimp_scene->mMeshes[i]->mNumVertices; j < jsize; ++j)
+        {
+            GeometryLayout::Vertex vertex;
+
+            const aiVector3D& pos = assimp_scene->mMeshes[i]->mVertices[j];
+            vertex.pos = vec3(pos.x, pos.y, pos.z);
+            const aiVector3D& nrm = assimp_scene->mMeshes[i]->mNormals[j];
+            vertex.nrm = vec3(nrm.x, nrm.y, nrm.z);
+            const aiVector3D& tex = assimp_scene->mMeshes[i]->mTextureCoords[0][j];
+            vertex.tex = vec2(tex.x, tex.y);
+
+            vertices.push_back(vertex);
+        }
+
+        part.material = &context.default_material;
+    }
+
+    VK_CHECK(init_descriptor_set(context, gpu_iface));
+    VK_CHECK(init_buffers(context, gpu_iface, reinterpret_cast<const uint8_t*>(&vertices[0]), vertices.size() * sizeof(GeometryLayout::Vertex),
+        reinterpret_cast<const uint8_t*>(&indices[0]), indices.size() * sizeof(uint16_t)));
 
     return VK_SUCCESS;
 }
