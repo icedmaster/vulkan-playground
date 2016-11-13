@@ -11,11 +11,13 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkFlags msgFlags, VkDebugReportObj
     uint64_t srcObject, size_t location, int32_t msgCode,
     const char *pLayerPrefix, const char *pMsg, void *pUserData)
 {
+#ifdef _MSC_VER
     char buff[256];
     sprintf(buff, "%s %s\n", pLayerPrefix, pMsg);
     printf(buff);
-#ifdef _MSC_VER
     OutputDebugString(buff);
+#else
+    printf("%s %s\n", pLayerPrefix, pMsg);
 #endif
     return VK_TRUE;
 }
@@ -91,6 +93,42 @@ bool wndprocess(HWND hwnd)
     }
     return true;
 }
+#elif __linux__
+// https://xcb.freedesktop.org/tutorial/basicwindowsanddrawing/
+xcb_window_t create_window(const char* name, uint32_t width, uint32_t height, xcb_connection_t* connection)
+{
+    xcb_window_t window = xcb_generate_id(connection);
+    const xcb_setup_t* setup = xcb_get_setup(connection);
+    xcb_screen_iterator_t iter = xcb_setup_roots_iterator(setup);
+    xcb_screen_t* screen = iter.data;
+    xcb_create_window(connection,                    /* Connection          */
+                      XCB_COPY_FROM_PARENT,          /* depth (same as root)*/
+                      window,                        /* window Id           */
+                      screen->root,                  /* parent window       */
+                      0, 0,                          /* x, y                */
+                      width, height,                 /* width, height       */
+                      10,                            /* border_width        */
+                      XCB_WINDOW_CLASS_INPUT_OUTPUT, /* class               */
+                      screen->root_visual,           /* visual              */
+                      0, NULL);                      /* masks, not used yet */
+    xcb_map_window(connection, window);
+
+    // create a graphic context
+    xcb_window_t foreground = xcb_generate_id(connection);
+    uint32_t values[2];
+    values[0] = screen->black_pixel;
+    values[1] = 0;
+    xcb_create_gc(connection, foreground, window, XCB_GC_FOREGROUND | XCB_GC_GRAPHICS_EXPOSURES, values);
+
+    /* create white (background) graphic context */
+    xcb_window_t background = xcb_generate_id(connection);
+    values[0] = screen->white_pixel;
+    values[1] = 0;
+    xcb_create_gc(connection, background, window, XCB_GC_BACKGROUND | XCB_GC_GRAPHICS_EXPOSURES, values);
+
+    xcb_flush(connection);
+    return window;
+}
 #endif
 
 namespace
@@ -101,6 +139,8 @@ VkResult create_instance(VulkanContext& context, const char* appname, bool enabl
     // check extensions
 #ifdef _WIN32
     const char* plaform_surface_extension_name = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
+#elif __linux__
+    const char* plaform_surface_extension_name = VK_KHR_XCB_SURFACE_EXTENSION_NAME;
 #endif
 
     bool surface_extension_found = false;
@@ -176,8 +216,13 @@ VkResult init_window(VulkanContext& context, const char* appname)
     if (context.platform_data.hwnd == 0)
         return VK_ERROR_INITIALIZATION_FAILED;
     return VK_SUCCESS;
-#endif
+#elif __linux__
+    context.platform_data.connection = xcb_connect(nullptr, nullptr);
+    context.platform_data.window = create_window(appname, context.width, context.height, context.platform_data.connection);
+    return VK_SUCCESS;
+#else
     return VK_ERROR_INITIALIZATION_FAILED;
+#endif
 }
 
 VkResult init_surface(VulkanContext& context)
@@ -192,6 +237,12 @@ VkResult init_surface(VulkanContext& context)
 
     VkResult res = vkCreateWin32SurfaceKHR(context.instance, &surface_info, context.allocation_callbacks, &context.surface);
     VULKAN_VERIFY(res, "vkCreateWin32SurfaceKHR failed");
+#elif __linux__
+    VkXcbSurfaceCreateInfoKHR surface_info = {};
+    surface_info.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+    surface_info.connection = context.platform_data.connection;
+    surface_info.window = context.platform_data.window;
+    VK_CHECK(vkCreateXcbSurfaceKHR(context.instance, &surface_info, context.allocation_callbacks, &context.surface));
 #endif
     return VK_SUCCESS;
 }
@@ -1681,6 +1732,24 @@ void Mesh::destroy(vk::VulkanContext& context)
         VK_CHECK(vkFreeDescriptorSets(*context.main_device, context.descriptor_pools.main_descriptor_pool, 1, &descriptor_set_));
     ibuffer_.destroy(context);
     vbuffer_.destroy(context);
+}
+
+std::string shaders_path()
+{
+#ifdef __linux__
+    return "../shaders/";
+#else
+    return "../../shaders/";
+#endif
+}
+
+std::string assets_path()
+{
+#ifdef __linux__
+    return "../assets/";
+#else
+    return "../../assets/";
+#endif
 }
 
 namespace

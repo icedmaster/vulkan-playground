@@ -129,14 +129,14 @@ public:
         VkShaderModuleCreateInfo shader_create_info = {};
         shader_create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
         std::vector<uint8_t> shader_data;
-        bool res = read_entire_file(shader_data, "../../shaders/01_fill.vert.spv", "rb");
+        bool res = read_entire_file(shader_data, vk::shaders_path() + "01_fill.vert.spv", "rb");
         ASSERT(res == true, "Can't read shader data from file 01_fill.vert.spv");
         shader_create_info.pCode = reinterpret_cast<const uint32_t*>(&shader_data[0]);
         shader_create_info.codeSize = shader_data.size();
         VK_CHECK(vkCreateShaderModule(*context.main_device, &shader_create_info, context.allocation_callbacks, &vsm));
 
         VkShaderModule fsm;
-        res = read_entire_file(shader_data, "../../shaders/01_fill.frag.spv", "rb");
+        res = read_entire_file(shader_data, vk::shaders_path() + "01_fill.frag.spv", "rb");
         ASSERT(res == true, "Can't read shader data from file 01_fill.frag.spv");
         shader_create_info.pCode = reinterpret_cast<const uint32_t*>(&shader_data[0]);
         shader_create_info.codeSize = shader_data.size();
@@ -425,14 +425,14 @@ public:
         VkShaderModuleCreateInfo shader_create_info = {};
         shader_create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
         std::vector<uint8_t> shader_data;
-        bool res = read_entire_file(shader_data, "../../shaders/01_deferred.vert.spv", "rb");
+        bool res = read_entire_file(shader_data, vk::shaders_path() + "01_deferred.vert.spv", "rb");
         ASSERT(res == true, "Can't read shader data from file 01_deferred.vert.spv");
         shader_create_info.pCode = reinterpret_cast<const uint32_t*>(&shader_data[0]);
         shader_create_info.codeSize = shader_data.size();
         VK_CHECK(vkCreateShaderModule(*context.main_device, &shader_create_info, context.allocation_callbacks, &vsm));
 
         VkShaderModule fsm;
-        res = read_entire_file(shader_data, "../../shaders/01_deferred.frag.spv", "rb");
+        res = read_entire_file(shader_data, vk::shaders_path() + "01_deferred.frag.spv", "rb");
         ASSERT(res == true, "Can't read shader data from file 01_deferred.frag.spv");
         shader_create_info.pCode = reinterpret_cast<const uint32_t*>(&shader_data[0]);
         shader_create_info.codeSize = shader_data.size();
@@ -590,7 +590,7 @@ int main(int argc, char** argv)
 
     // load an image
     vk::ImageData image_data;
-    VK_CHECK(vk::load_tga_image(image_data, "../../assets/checker.tga"));
+    VK_CHECK(vk::load_tga_image(image_data, vk::assets_path() + "checker.tga"));
     // create a texture
     vk::ImageView::Settings image_settings;
     image_settings.width = image_data.width;

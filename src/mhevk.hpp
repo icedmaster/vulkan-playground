@@ -4,14 +4,20 @@
 #ifdef _WIN32
 #define VK_USE_PLATFORM_WIN32_KHR
 #define NOMINMAX
+#elif __linux__
+#define VK_USE_PLATFORM_XCB_KHR
 #endif
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_sdk_platform.h>
 
 #include <vector>
+#include <limits>
+#include <string>
 #include <cstdio>
 #include <cassert>
+#include <cmath>
+#include <cstring>
 
 #ifdef _DEBUG
 #define VERIFY_PRINT(text) {printf("%s %d %s\n", __FUNCTION__, __LINE__, text); assert(0);}
@@ -322,7 +328,7 @@ public:
         *this *= inv_det;
     }
 
-    static matrix4x4 identity()
+    static matrix4x4& identity()
     {
         static matrix4x4 m;
         return m;
@@ -435,6 +441,11 @@ inline bool read_entire_file(std::vector<uint8_t>& data, const char* filename, c
     return res == size;
 }
 
+inline bool read_entire_file(std::vector<uint8_t>& data, const std::string& filename, const char* mode)
+{
+    return read_entire_file(data, filename.c_str(), mode);
+}
+
 namespace vk {
 
 struct VulkanContext;
@@ -448,6 +459,12 @@ struct PlatformData
 {
     HMODULE hinstance;
     HWND hwnd;
+};
+#elif __linux__
+struct PlatformData
+{
+    xcb_connection_t* connection;
+    xcb_window_t window;
 };
 #endif
 
@@ -791,6 +808,10 @@ struct ImageData
 };
 
 VkResult load_tga_image(ImageData& image_data, const char* filename);
+inline VkResult load_tga_image(ImageData &image_data, const std::string& filename)
+{
+    return load_tga_image(image_data, filename.c_str());
+}
 
 class ImageView
 {
@@ -1351,6 +1372,9 @@ void destroy_vulkan_context(VulkanContext& context);
 bool app_message_loop(VulkanContext& context);
 
 void init_fullscreen_viewport(VkViewport& viewport, const VulkanContext& context);
+
+std::string shaders_path();
+std::string assets_path();
 
 }
 }
